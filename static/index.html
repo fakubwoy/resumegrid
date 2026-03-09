@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ResumeGrid — Bulk Resume Extractor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --surface: #141720;
+      --surface2: #1c2030;
+      --border: #2a2f45;
+      --accent: #4f8ef7;
+      --accent2: #7b5cf0;
+      --green: #34d399;
+      --red: #f87171;
+      --yellow: #fbbf24;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --mono: 'Space Mono', monospace;
+      --sans: 'DM Sans', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(79,142,247,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,142,247,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Header */
+    header {
+      margin-bottom: 56px;
+    }
+
+    .logo-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: white;
+      letter-spacing: -1px;
+    }
+
+    .logo-text {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--accent);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -1.5px;
+      background: linear-gradient(135deg, #fff 40%, rgba(255,255,255,0.4));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 560px;
+    }
+
+    /* Stats bar */
+    .stats-bar {
+      display: flex;
+      gap: 1px;
+      margin-top: 32px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .stat {
+      flex: 1;
+      background: var(--surface);
+      padding: 14px 20px;
+      text-align: center;
+    }
+
+    .stat-val {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+
+    /* Upload zone */
+    .upload-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .upload-zone {
+      position: relative;
+      padding: 56px 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .upload-zone::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(79,142,247,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .upload-zone:hover::before,
+    .upload-zone.drag-over::before {
+      opacity: 1;
+    }
+
+    .upload-zone.drag-over {
+      border-bottom-color: var(--accent);
+    }
+
+    .upload-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .upload-zone:hover .upload-icon,
+    .upload-zone.drag-over .upload-icon {
+      transform: translateY(-3px);
+      border-color: var(--accent);
+    }
+
+    .upload-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .upload-hint {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .upload-hint span {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .badges {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .badge {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .badge-pdf { background: rgba(248, 113, 113, 0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.3); }
+    .badge-doc { background: rgba(79,142,247,0.12); color: var(--accent); border: 1px solid rgba(79,142,247,0.3); }
+    .badge-docx { background: rgba(123,92,240,0.12); color: var(--accent2); border: 1px solid rgba(123,92,240,0.3); }
+
+    input[type="file"] { display: none; }
+
+    /* File list */
+    .file-list {
+      padding: 20px 24px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .file-list.active { display: flex; }
+
+    .file-list-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .file-list-title {
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .clear-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: var(--sans);
+      padding: 2px 8px;
+      border-radius: 4px;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .clear-btn:hover { color: var(--red); background: rgba(248,113,113,0.1); }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+
+    .file-item.success { border-color: var(--green); }
+    .file-item.error { border-color: var(--red); }
+
+    .file-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .file-icon.pdf { background: rgba(248,113,113,0.12); }
+    .file-icon.doc { background: rgba(79,142,247,0.12); }
+    .file-icon.docx { background: rgba(123,92,240,0.12); }
+
+    .file-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .file-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-size {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .file-status {
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 700;
+    }
+
+    .file-status.pending { background: rgba(100,116,139,0.15); color: var(--muted); }
+    .file-status.processing { background: rgba(79,142,247,0.15); color: var(--accent); }
+    .file-status.success { background: rgba(52,211,153,0.15); color: var(--green); }
+    .file-status.error { background: rgba(248,113,113,0.15); color: var(--red); }
+
+    .remove-file {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .remove-file:hover { color: var(--red); background: rgba(248,113,113,0.1); }
+
+    /* Controls */
+    .controls {
+      padding: 24px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 14px 24px;
+      border-radius: 10px;
+      border: none;
+      font-family: var(--sans);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: white;
+    }
+
+    .btn-primary:not(:disabled):hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(79,142,247,0.3);
+    }
+
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:not(:disabled):hover {
+      background: var(--surface);
+      border-color: var(--accent);
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Progress */
+    .progress-section {
+      margin-top: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: none;
+    }
+
+    .progress-section.active { display: block; }
+
+    .progress-bar {
+      height: 8px;
+      background: var(--surface2);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 0.3s ease;
+      width: 0;
+    }
+
+    .progress-text {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .progress-pct {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .progress-msg {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* Results */
+    .result-card {
+      margin-top: 24px;
+      background: var(--surface);
+      border: 1px solid var(--green);
+      border-radius: 12px;
+      padding: 24px;
+      display: none;
+    }
+
+    .result-card.active { display: block; }
+
+    .result-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(52,211,153,0.15);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .result-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .result-subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .result-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    /* Error log */
+    .error-log {
+      margin-top: 16px;
+      background: rgba(248,113,113,0.08);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 10px;
+      padding: 16px;
+      display: none;
+    }
+
+    .error-log.active { display: block; }
+
+    .error-title {
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--red);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .error-item {
+      font-size: 12px;
+      color: var(--text);
+      margin-bottom: 6px;
+      padding-left: 12px;
+      border-left: 2px solid var(--red);
+    }
+
+    .error-item:last-child { margin-bottom: 0; }
+
+    /* Footer */
+    footer {
+      margin-top: 80px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    #footerStatus {
+      font-family: var(--mono);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-size: 13px;
+      color: var(--text);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s;
+      z-index: 1000;
+      max-width: 320px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast.success { border-color: var(--green); }
+    .toast.error { border-color: var(--red); }
+    .toast.info { border-color: var(--accent); }
+
+    @media (max-width: 640px) {
+      .container { padding: 40px 16px; }
+      h1 { font-size: 2rem; }
+      .stats-bar { flex-direction: column; }
+      .controls { flex-direction: column; }
+      .result-actions { flex-direction: column; }
+      .toast { right: 16px; left: 16px; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo-bar">
+        <div class="logo-icon">RG</div>
+        <div class="logo-text">ResumeGrid</div>
+      </div>
+      <h1>Bulk Resume Extraction</h1>
+      <p class="subtitle">
+        Upload multiple resumes (PDF, DOC, DOCX) and get a clean Excel file with every candidate's data — including Last CTC and Current Status fields for recruiters.
+      </p>
+      <div class="stats-bar">
+        <div class="stat">
+          <div class="stat-val" id="statFiles">0</div>
+          <div class="stat-label">Queued</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="statProcessed">0</div>
+          <div class="stat-label">Processed</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val">28</div>
+          <div class="stat-label">Fields</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="upload-card">
+      <div class="upload-zone" id="dropZone">
+        <div class="upload-icon">📂</div>
+        <div class="upload-title">Drag & drop or click to upload</div>
+        <div class="upload-hint">
+          Upload resumes to extract candidate data<br>
+          <span>Supported: PDF, DOC, DOCX</span>
+        </div>
+        <div class="badges">
+          <div class="badge badge-pdf">PDF</div>
+          <div class="badge badge-doc">DOC</div>
+          <div class="badge badge-docx">DOCX</div>
+        </div>
+        <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx" />
+      </div>
+
+      <div class="file-list" id="fileList">
+        <div class="file-list-header">
+          <div class="file-list-title"><span id="queueCount">0 files</span> ready</div>
+          <button class="clear-btn" id="clearBtn">Clear All</button>
+        </div>
+        <div id="fileItems"></div>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-secondary" id="addMoreBtn">
+          ➕ Add More
+        </button>
+        <button class="btn btn-primary" id="extractBtn" disabled>
+          <span id="btnText">Extract & Export</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="progress-section" id="progressSection">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text">
+        <div class="progress-msg" id="progressMsg">Initializing...</div>
+        <div class="progress-pct" id="progressPct">0%</div>
+      </div>
+    </div>
+
+    <div class="result-card" id="resultCard">
+      <div class="result-icon">✓</div>
+      <div class="result-title" id="resultTitle">Extraction Complete</div>
+      <div class="result-subtitle" id="resultSubtitle">Your Excel file is ready</div>
+      <div class="result-actions">
+        <button class="btn btn-primary" id="downloadBtn">
+          ⬇ Download Excel
+        </button>
+        <button class="btn btn-secondary" id="newBatchBtn">
+          🔄 New Batch
+        </button>
+      </div>
+    </div>
+
+    <div class="error-log" id="errorLog">
+      <div class="error-title">⚠ Errors</div>
+      <div id="errorItems"></div>
+    </div>
+
+    <footer>
+      <span>ResumeGrid v2.0 — powered by Groq · llama-3.3-70b</span>
+      <span id="footerStatus">● Backend: checking...</span>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // Dynamically determine API base URL
+    const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:5000'
+      : window.location.origin;
+
+    let files = [];
+    let isProcessing = false;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const fileItems = document.getElementById('fileItems');
+    const clearBtn = document.getElementById('clearBtn');
+    const extractBtn = document.getElementById('extractBtn');
+    const addMoreBtn = document.getElementById('addMoreBtn');
+    const progressSection = document.getElementById('progressSection');
+    const progressFill = document.getElementById('progressFill');
+    const progressPct = document.getElementById('progressPct');
+    const progressMsg = document.getElementById('progressMsg');
+    const resultCard = document.getElementById('resultCard');
+    const resultTitle = document.getElementById('resultTitle');
+    const resultSubtitle = document.getElementById('resultSubtitle');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const newBatchBtn = document.getElementById('newBatchBtn');
+    const errorLog = document.getElementById('errorLog');
+    const errorItems = document.getElementById('errorItems');
+    const statFiles = document.getElementById('statFiles');
+    const statProcessed = document.getElementById('statProcessed');
+    const queueCount = document.getElementById('queueCount');
+    const footerStatus = document.getElementById('footerStatus');
+    const toast = document.getElementById('toast');
+    const btnText = document.getElementById('btnText');
+
+    // Health check
+    async function checkHealth() {
+      try {
+        const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) {
+          footerStatus.textContent = '● Backend: online';
+          footerStatus.style.color = '#34d399';
+        } else {
+          throw new Error();
+        }
+      } catch {
+        footerStatus.textContent = '● Backend: offline';
+        footerStatus.style.color = '#f87171';
+      }
+    }
+
+    checkHealth();
+    setInterval(checkHealth, 10000);
+
+    function showToast(msg, type = 'info') {
+      toast.textContent = msg;
+      toast.className = `toast ${type} show`;
+      setTimeout(() => toast.classList.remove('show'), 3500);
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function getExt(name) {
+      return name.split('.').pop().toLowerCase();
+    }
+
+    function getFileEmoji(name) {
+      const ext = getExt(name);
+      if (ext === 'pdf') return '📕';
+      if (ext === 'doc') return '📘';
+      return '📗';
+    }
+
+    function updateStats() {
+      statFiles.textContent = files.length;
+      queueCount.textContent = `${files.length} file${files.length !== 1 ? 's' : ''}`;
+      extractBtn.disabled = files.length === 0 || isProcessing;
+    }
+
+    function renderFiles() {
+      fileItems.innerHTML = '';
+      files.forEach((f, i) => {
+        const ext = getExt(f.file.name);
+        const item = document.createElement('div');
+        item.className = `file-item ${f.status}`;
+        item.id = `file-item-${i}`;
+        item.innerHTML = `
+          <div class="file-icon ${ext}">${getFileEmoji(f.file.name)}</div>
+          <div class="file-info">
+            <div class="file-name">${f.file.name}</div>
+            <div class="file-size">${formatSize(f.file.size)}</div>
+          </div>
+          <div class="file-status ${f.status}" id="status-${i}">${getStatusLabel(f.status)}</div>
+          ${f.status === 'pending' ? `<button class="remove-file" onclick="removeFile(${i})">✕</button>` : ''}
+        `;
+        fileItems.appendChild(item);
+      });
+
+      fileList.classList.toggle('active', files.length > 0);
+      updateStats();
+    }
+
+    function getStatusLabel(status) {
+      const map = { pending: 'QUEUED', processing: 'PROCESSING...', success: 'DONE', error: 'FAILED' };
+      return map[status] || status.toUpperCase();
+    }
+
+    function removeFile(idx) {
+      files.splice(idx, 1);
+      renderFiles();
+    }
+
+    function addFiles(newFiles) {
+      const allowed = ['pdf', 'doc', 'docx'];
+      let added = 0;
+      for (const f of newFiles) {
+        const ext = getExt(f.name);
+        if (!allowed.includes(ext)) {
+          showToast(`Skipped ${f.name} — unsupported format`, 'error');
+          continue;
+        }
+        if (files.some(existing => existing.file.name === f.name)) {
+          showToast(`${f.name} already in queue`, 'info');
+          continue;
+        }
+        files.push({ file: f, status: 'pending' });
+        added++;
+      }
+      if (added > 0) {
+        renderFiles();
+        showToast(`${added} file${added !== 1 ? 's' : ''} added`, 'success');
+      }
+    }
+
+    // Drag & drop
+    dropZone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      addFiles(Array.from(e.dataTransfer.files));
+    });
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', () => {
+      addFiles(Array.from(fileInput.files));
+      fileInput.value = '';
+    });
+
+    clearBtn.addEventListener('click', () => {
+      files = [];
+      renderFiles();
+      hideResults();
+    });
+
+    addMoreBtn.addEventListener('click', () => fileInput.click());
+
+    function hideResults() {
+      resultCard.classList.remove('active');
+      errorLog.classList.remove('active');
+    }
+
+    function setProgress(pct, msg) {
+      progressFill.style.width = pct + '%';
+      progressPct.textContent = pct + '%';
+      progressMsg.textContent = msg;
+    }
+
+    extractBtn.addEventListener('click', async () => {
+      if (files.length === 0 || isProcessing) return;
+
+      isProcessing = true;
+      extractBtn.disabled = true;
+      btnText.innerHTML = '<span class="spinner"></span> Processing...';
+      progressSection.classList.add('active');
+      hideResults();
+
+      setProgress(5, 'Uploading files to server...');
+
+      files.forEach(f => f.status = 'processing');
+      renderFiles();
+
+      const formData = new FormData();
+      files.forEach(f => formData.append('files', f.file));
+
+      try {
+        setProgress(20, `Sending ${files.length} resume${files.length !== 1 ? 's' : ''} to AI...`);
+
+        // Simulate incremental progress while waiting
+        let prog = 20;
+        const interval = setInterval(() => {
+          if (prog < 85) {
+            prog += Math.random() * 8;
+            const remaining = files.length - Math.floor(prog / 100 * files.length);
+            setProgress(Math.round(prog), `AI extracting data... ~${remaining} remaining`);
+          }
+        }, 1500);
+
+        const response = await fetch(`${API_BASE}/extract`, {
+          method: 'POST',
+          body: formData
+        });
+
+        clearInterval(interval);
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Extraction failed');
+        }
+
+        setProgress(100, 'Complete!');
+
+        files.forEach(f => {
+          const hasError = data.errors?.some(e => e.file === f.file.name);
+          f.status = hasError ? 'error' : 'success';
+        });
+
+        renderFiles();
+        statProcessed.textContent = data.processed;
+
+        resultTitle.textContent = `Extracted ${data.processed} candidate${data.processed !== 1 ? 's' : ''}`;
+        resultSubtitle.textContent = `Excel file ready — ${data.processed} row${data.processed !== 1 ? 's' : ''} of structured data (including Last CTC & Status)`;
+        resultCard.classList.add('active');
+
+        if (data.errors && data.errors.length > 0) {
+          errorItems.innerHTML = data.errors.map(e =>
+            `<div class="error-item"><strong>${e.file}</strong>: ${e.error}</div>`
+          ).join('');
+          errorLog.classList.add('active');
+        }
+
+        showToast(`Done! ${data.processed} resumes extracted`, 'success');
+
+      } catch (err) {
+        files.forEach(f => f.status = 'error');
+        renderFiles();
+        setProgress(0, 'Failed');
+        progressSection.classList.remove('active');
+
+        errorItems.innerHTML = `<div class="error-item"><strong>Error:</strong> ${err.message}</div>`;
+        errorLog.classList.add('active');
+
+        showToast('Extraction failed — check backend', 'error');
+
+      } finally {
+        isProcessing = false;
+        btnText.textContent = 'Extract & Export';
+        extractBtn.disabled = files.length === 0;
+        setTimeout(() => progressSection.classList.remove('active'), 2000);
+      }
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      window.open(`${API_BASE}/download`, '_blank');
+    });
+
+    newBatchBtn.addEventListener('click', () => {
+      files = [];
+      statProcessed.textContent = '0';
+      renderFiles();
+      hideResults();
+      progressSection.classList.remove('active');
+    });
+  </script>
+</body>
+</html>
