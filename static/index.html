@@ -682,7 +682,7 @@
 
     <footer>
       <span>ResumeGrid v2.0 — powered by Groq · llama-4-maverick</span>
-      <span id="footerStatus">● Backend: checking...</span>
+      <span id="footerStatus"></span>
     </footer>
   </div>
 
@@ -722,24 +722,7 @@
     const toast = document.getElementById('toast');
     const btnText = document.getElementById('btnText');
 
-    // Health check
-    async function checkHealth() {
-      try {
-        const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
-        if (r.ok) {
-          footerStatus.textContent = '● Backend: online';
-          footerStatus.style.color = '#34d399';
-        } else {
-          throw new Error();
-        }
-      } catch {
-        footerStatus.textContent = '● Backend: offline';
-        footerStatus.style.color = '#f87171';
-      }
-    }
-
-    checkHealth();
-    setInterval(checkHealth, 10000);
+    // Health check removed — no polling during processing
 
     function showToast(msg, type = 'info') {
       toast.textContent = msg;
