@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# gcc needed for gevent's C extension
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
@@ -15,8 +15,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY static/ ./static/
 
-# Expose port (Railway overrides with $PORT env var)
 EXPOSE 5000
 
-# Start gunicorn
-CMD gunicorn app:app --bind 0.0.0.0:${PORT:-5000} --workers 2 --timeout 120
+# gevent workers: SSE streams + health checks run concurrently, no blocking
+# timeout 600s covers large batches with rate-limit retries
+CMD gunicorn app:app \
+    --bind 0.0.0.0:${PORT:-5000} \
+    --worker-class gevent \
+    --workers 2 \
+    --worker-connections 100 \
+    --timeout 600 \
+    --keep-alive 5
