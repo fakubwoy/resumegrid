@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response, stream_with_context
 from flask_cors import CORS
 import os
 import json
@@ -12,6 +12,8 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -20,6 +22,9 @@ client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 UPLOAD_FOLDER = tempfile.mkdtemp()
+
+# Max concurrent Groq calls — stay under rate limits
+MAX_WORKERS = 5
 
 CANONICAL_FIELDS = {
     "full_name": ["name", "full name", "candidate name", "applicant name", "your name"],
@@ -75,15 +80,11 @@ COLUMN_HEADERS = {
     "most_recent_duration": "Most Recent Duration", "total_companies": "Total Companies",
     "certifications": "Certifications", "languages_spoken": "Languages Spoken",
     "projects": "Key Projects", "achievements": "Achievements/Awards",
-    "last_ctc": "Last CTC", "current_status": "Current Status"
+    "source_file": "Source File", "last_ctc": "Last CTC", "current_status": "Current Status"
 }
 
 
 def extract_hyperlinks_from_pdf(tmp_path: str) -> list[str]:
-    """
-    Extract all hyperlink URLs from PDF annotations using pypdf.
-    Handles both /URI annotations and /GoToR actions.
-    """
     urls = []
     try:
         reader = pypdf.PdfReader(tmp_path)
@@ -108,10 +109,6 @@ def extract_hyperlinks_from_pdf(tmp_path: str) -> list[str]:
 
 
 def classify_urls(urls: list[str]) -> dict:
-    """
-    Classify a list of URLs into linkedin / github / portfolio / email buckets.
-    Returns a dict of field -> url for any that are identified.
-    """
     result = {}
     for url in urls:
         url_lower = url.lower()
@@ -122,17 +119,11 @@ def classify_urls(urls: list[str]) -> dict:
         elif "mailto:" in url_lower and "email" not in result:
             result["email"] = url.replace("mailto:", "").strip()
         elif "portfolio" not in result and "linkedin.com" not in url_lower and "github.com" not in url_lower:
-            # Anything else is likely a portfolio/personal site
             result["portfolio"] = url
     return result
 
 
 def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dict]:
-    """
-    Extract plain text AND any embedded hyperlink URLs from the file.
-    Returns (text, url_overrides) where url_overrides is a dict of
-    canonical field -> URL pulled from annotations (not text).
-    """
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf":
@@ -140,7 +131,6 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
             tmp.write(file_content)
             tmp_path = tmp.name
         try:
-            # Extract plain text
             parts = []
             with pdfplumber.open(tmp_path) as pdf:
                 for page in pdf.pages:
@@ -148,11 +138,8 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
                     if t:
                         parts.append(t)
             text = "\n".join(parts)
-
-            # Extract hyperlinks from annotations
             urls = extract_hyperlinks_from_pdf(tmp_path)
             url_overrides = classify_urls(urls)
-
             return text, url_overrides
         finally:
             os.unlink(tmp_path)
@@ -163,7 +150,6 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
             tmp_path = tmp.name
         try:
             text = docx2txt.process(tmp_path)
-            # docx2txt doesn't extract hyperlinks; try python-docx for those
             url_overrides = extract_hyperlinks_from_docx(tmp_path)
             return text, url_overrides
         finally:
@@ -173,12 +159,10 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
 
 
 def extract_hyperlinks_from_docx(tmp_path: str) -> dict:
-    """Extract hyperlinks from a .docx file using python-docx relationships."""
     urls = []
     try:
         from docx import Document
         doc = Document(tmp_path)
-        # Relationships hold the actual hyperlink targets
         for rel in doc.part.rels.values():
             if "hyperlink" in rel.reltype.lower():
                 url = rel.target_ref
@@ -204,7 +188,7 @@ Include these fields (use null if not found):
 
 For current_status, analyze the resume:
 - If mentions "current" role or dates like "2023-Present" → "Employed"
-- If most recent job ended in past or mentions "seeking" → "Not Employed"  
+- If most recent job ended in past or mentions "seeking" → "Not Employed"
 - If no work experience section or only internships/projects → "Fresher"
 
 Return ONLY valid JSON with no explanation or markdown."""
@@ -246,12 +230,8 @@ def extract_resume_data(file_content: bytes, filename: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Override with actual embedded hyperlink URLs — these are ground truth
-    # Only override if the LLM produced a vague label like "GitHub" or "LinkedIn"
-    # or if it found nothing at all
     for field, url in url_overrides.items():
         existing = data.get(field, "")
-        # Replace if empty, or if value looks like a display label rather than a real URL
         if not existing or not existing.startswith("http"):
             data[field] = url
 
@@ -306,7 +286,7 @@ def create_excel(all_data: list) -> str:
 
     for col_idx, col_key in enumerate(final_columns, 1):
         cell = ws.cell(row=1, column=col_idx)
-        cell.value = "Source File" if col_key == "source_file" else COLUMN_HEADERS.get(col_key, col_key.replace("_", " ").title())
+        cell.value = COLUMN_HEADERS.get(col_key, col_key.replace("_", " ").title())
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = header_align
@@ -318,7 +298,6 @@ def create_excel(all_data: list) -> str:
             cell = ws.cell(row=row_idx, column=col_idx)
             value = candidate.get("filename", "") if col_key == "source_file" else candidate.get(col_key, "")
 
-            # Make URL fields clickable hyperlinks in Excel
             if value and str(value).startswith("http") and col_key in ("linkedin", "github", "portfolio"):
                 cell.value = value
                 cell.hyperlink = value
@@ -354,6 +333,11 @@ def create_excel(all_data: list) -> str:
     return output_path
 
 
+def sse_event(data: dict) -> str:
+    """Format a Server-Sent Event."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
 @app.route("/")
 def index():
     return app.send_static_file('index.html')
@@ -366,32 +350,111 @@ def health():
 
 @app.route("/extract", methods=["POST"])
 def extract():
+    """
+    Streaming SSE endpoint. Processes files concurrently and emits progress
+    events as each file completes, then a final 'done' event with the summary.
+    """
     if "files" not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
-    results, errors = [], []
 
+    # Read all file content eagerly before streaming (can't read from request inside generator)
+    file_payloads = []
     for file in files:
         if not file.filename:
             continue
-        filename = file.filename
-        ext = Path(filename).suffix.lower()
+        ext = Path(file.filename).suffix.lower()
         if ext not in [".pdf", ".doc", ".docx"]:
-            errors.append({"file": filename, "error": "Unsupported file type"})
-            continue
-        try:
-            data = extract_resume_data(file.read(), filename)
-            data["filename"] = filename
-            results.append(data)
-        except Exception as e:
-            errors.append({"file": filename, "error": str(e)})
+            file_payloads.append({"filename": file.filename, "content": None, "error": "Unsupported file type"})
+        else:
+            file_payloads.append({"filename": file.filename, "content": file.read(), "error": None})
 
-    if not results:
-        return jsonify({"error": "No resumes could be processed", "details": errors}), 400
+    if not file_payloads:
+        return jsonify({"error": "No valid files found"}), 400
 
-    create_excel(results)
-    return jsonify({"success": True, "processed": len(results), "errors": errors, "download_url": "/download"})
+    def generate():
+        results = []
+        errors = []
+        total = len(file_payloads)
+        completed = 0
+        lock = threading.Lock()
+
+        # Emit start event
+        yield sse_event({"type": "start", "total": total})
+
+        def process_one(payload):
+            filename = payload["filename"]
+            if payload["error"]:
+                return {"ok": False, "filename": filename, "error": payload["error"]}
+            try:
+                data = extract_resume_data(payload["content"], filename)
+                data["filename"] = filename
+                return {"ok": True, "filename": filename, "data": data}
+            except Exception as e:
+                return {"ok": False, "filename": filename, "error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(process_one, p): p["filename"] for p in file_payloads}
+
+            for future in as_completed(futures):
+                result = future.result()
+                with lock:
+                    completed += 1
+                    if result["ok"]:
+                        results.append(result["data"])
+                    else:
+                        errors.append({"file": result["filename"], "error": result["error"]})
+
+                    pct = round((completed / total) * 90)  # reserve last 10% for Excel gen
+                    yield sse_event({
+                        "type": "progress",
+                        "filename": result["filename"],
+                        "ok": result["ok"],
+                        "error": result.get("error"),
+                        "completed": completed,
+                        "total": total,
+                        "pct": pct
+                    })
+
+        if results:
+            try:
+                create_excel(results)
+                yield sse_event({
+                    "type": "done",
+                    "success": True,
+                    "processed": len(results),
+                    "errors": errors,
+                    "download_url": "/download",
+                    "pct": 100
+                })
+            except Exception as e:
+                yield sse_event({
+                    "type": "done",
+                    "success": False,
+                    "error": f"Excel generation failed: {str(e)}",
+                    "processed": 0,
+                    "errors": errors,
+                    "pct": 0
+                })
+        else:
+            yield sse_event({
+                "type": "done",
+                "success": False,
+                "error": "No resumes could be processed",
+                "processed": 0,
+                "errors": errors,
+                "pct": 0
+            })
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"  # disable nginx/Railway proxy buffering
+        }
+    )
 
 
 @app.route("/download")

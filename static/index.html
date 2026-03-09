@@ -882,55 +882,82 @@
       files.forEach(f => formData.append('files', f.file));
 
       try {
-        setProgress(20, `Sending ${files.length} resume${files.length !== 1 ? 's' : ''} to AI...`);
-
-        // Simulate incremental progress while waiting
-        let prog = 20;
-        const interval = setInterval(() => {
-          if (prog < 85) {
-            prog += Math.random() * 8;
-            const remaining = files.length - Math.floor(prog / 100 * files.length);
-            setProgress(Math.round(prog), `AI extracting data... ~${remaining} remaining`);
-          }
-        }, 1500);
-
         const response = await fetch(`${API_BASE}/extract`, {
           method: 'POST',
           body: formData
         });
 
-        clearInterval(interval);
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-          throw new Error(data.error || 'Extraction failed');
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: 'Server error' }));
+          throw new Error(err.error || `HTTP ${response.status}`);
         }
 
-        setProgress(100, 'Complete!');
+        // Read SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        files.forEach(f => {
-          const hasError = data.errors?.some(e => e.file === f.file.name);
-          f.status = hasError ? 'error' : 'success';
-        });
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        renderFiles();
-        statProcessed.textContent = data.processed;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop(); // keep incomplete chunk
 
-        resultTitle.textContent = `Extracted ${data.processed} candidate${data.processed !== 1 ? 's' : ''}`;
-        resultSubtitle.textContent = `Excel file ready — ${data.processed} row${data.processed !== 1 ? 's' : ''} of structured data (including Last CTC & Status)`;
-        resultCard.classList.add('active');
+          for (const chunk of lines) {
+            const line = chunk.trim();
+            if (!line.startsWith('data:')) continue;
+            let event;
+            try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
 
-        if (data.errors && data.errors.length > 0) {
-          errorItems.innerHTML = data.errors.map(e =>
-            `<div class="error-item"><strong>${e.file}</strong>: ${e.error}</div>`
-          ).join('');
-          errorLog.classList.add('active');
+            if (event.type === 'start') {
+              setProgress(5, `Processing ${event.total} resume${event.total !== 1 ? 's' : ''} concurrently...`);
+
+            } else if (event.type === 'progress') {
+              // Update individual file status
+              const idx = files.findIndex(f => f.file.name === event.filename);
+              if (idx !== -1) {
+                files[idx].status = event.ok ? 'success' : 'error';
+                const itemEl = document.getElementById(`file-item-${idx}`);
+                const statusEl = document.getElementById(`status-${idx}`);
+                if (itemEl) itemEl.className = `file-item ${files[idx].status}`;
+                if (statusEl) {
+                  statusEl.className = `file-status ${files[idx].status}`;
+                  statusEl.textContent = event.ok ? 'DONE' : 'FAILED';
+                }
+              }
+              const remaining = event.total - event.completed;
+              setProgress(event.pct, remaining > 0
+                ? `Extracting... ${event.completed}/${event.total} done`
+                : 'Generating Excel...'
+              );
+              statProcessed.textContent = files.filter(f => f.status === 'success').length;
+
+            } else if (event.type === 'done') {
+              if (!event.success) throw new Error(event.error || 'Extraction failed');
+
+              setProgress(100, 'Complete!');
+              statProcessed.textContent = event.processed;
+
+              resultTitle.textContent = `Extracted ${event.processed} candidate${event.processed !== 1 ? 's' : ''}`;
+              resultSubtitle.textContent = `Excel file ready — ${event.processed} row${event.processed !== 1 ? 's' : ''} of structured data (including Last CTC & Status)`;
+              resultCard.classList.add('active');
+
+              if (event.errors && event.errors.length > 0) {
+                errorItems.innerHTML = event.errors.map(e =>
+                  `<div class="error-item"><strong>${e.file}</strong>: ${e.error}</div>`
+                ).join('');
+                errorLog.classList.add('active');
+              }
+
+              showToast(`Done! ${event.processed} resumes extracted`, 'success');
+            }
+          }
         }
-
-        showToast(`Done! ${data.processed} resumes extracted`, 'success');
 
       } catch (err) {
-        files.forEach(f => f.status = 'error');
+        files.forEach(f => { if (f.status === 'processing') f.status = 'error'; });
         renderFiles();
         setProgress(0, 'Failed');
         progressSection.classList.remove('active');
@@ -944,7 +971,7 @@
         isProcessing = false;
         btnText.textContent = 'Extract & Export';
         extractBtn.disabled = files.length === 0;
-        setTimeout(() => progressSection.classList.remove('active'), 2000);
+        setTimeout(() => progressSection.classList.remove('active'), 3000);
       }
     });
 
