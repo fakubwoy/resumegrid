@@ -339,6 +339,7 @@
 
     .file-status.pending { background: rgba(100,116,139,0.15); color: var(--muted); }
     .file-status.processing { background: rgba(79,142,247,0.15); color: var(--accent); }
+    .file-status.retrying { background: rgba(251,191,36,0.15); color: var(--yellow); }
     .file-status.success { background: rgba(52,211,153,0.15); color: var(--green); }
     .file-status.error { background: rgba(248,113,113,0.15); color: var(--red); }
 
@@ -680,7 +681,7 @@
     </div>
 
     <footer>
-      <span>ResumeGrid v2.0 — powered by Groq · llama-3.3-70b</span>
+      <span>ResumeGrid v2.0 — powered by Groq · llama-4-maverick</span>
       <span id="footerStatus">● Backend: checking...</span>
     </footer>
   </div>
@@ -793,7 +794,7 @@
     }
 
     function getStatusLabel(status) {
-      const map = { pending: 'QUEUED', processing: 'PROCESSING...', success: 'DONE', error: 'FAILED' };
+      const map = { pending: 'QUEUED', processing: 'PROCESSING...', retrying: 'RETRYING...', success: 'DONE', error: 'FAILED' };
       return map[status] || status.toUpperCase();
     }
 
@@ -935,7 +936,14 @@
               statProcessed.textContent = files.filter(f => f.status === 'success').length;
 
             } else if (event.type === 'done') {
-              if (!event.success) throw new Error(event.error || 'Extraction failed');
+              if (!event.success) {
+                const allRateLimit = event.errors?.length > 0 &&
+                  event.errors.every(e => e.error && e.error.includes('rate_limit_exceeded'));
+                if (allRateLimit) {
+                  throw new Error("Groq daily token limit (100k) exhausted. Wait until midnight UTC for the quota to reset, or upgrade your Groq plan at console.groq.com/settings/billing.");
+                }
+                throw new Error(event.error || 'Extraction failed');
+              }
 
               setProgress(100, 'Complete!');
               statProcessed.textContent = event.processed;

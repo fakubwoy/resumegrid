@@ -19,7 +19,7 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 
 UPLOAD_FOLDER = tempfile.mkdtemp()
 
@@ -194,6 +194,64 @@ For current_status, analyze the resume:
 Return ONLY valid JSON with no explanation or markdown."""
 
 
+def parse_retry_seconds(error_message: str) -> float:
+    """
+    Parse the wait time from a Groq 429 error message.
+    Handles formats like: "Please try again in 7m40.511999999s"
+    or just "Please try again in 45.3s"
+    Returns seconds as float, or a default fallback.
+    """
+    # Try "Xm Ys" format
+    m = re.search(r'try again in (\d+)m([\d.]+)s', str(error_message))
+    if m:
+        return int(m.group(1)) * 60 + float(m.group(2))
+    # Try just "Xs" format
+    m = re.search(r'try again in ([\d.]+)s', str(error_message))
+    if m:
+        return float(m.group(1))
+    # Fallback: 60s
+    return 60.0
+
+
+def call_groq_with_retry(text: str, max_retries: int = 3) -> str:
+    """Call Groq API, automatically waiting and retrying on TPD/TPM 429s."""
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                temperature=0.0,
+                max_tokens=2000,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
+                    }
+                ]
+            )
+            return response.choices[0].message.content.strip()
+
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = '429' in err_str and 'rate_limit_exceeded' in err_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                wait = parse_retry_seconds(err_str)
+                # Cap single wait at 20 minutes to avoid absurdly long hangs
+                wait = min(wait + 2, 1200)
+                import time
+                time.sleep(wait)
+                continue  # retry
+
+            # Not a rate limit, or out of retries — re-raise
+            raise
+
+    raise RuntimeError("Max retries exceeded")
+
+
 def extract_resume_data(file_content: bytes, filename: str) -> dict:
     text, url_overrides = extract_text_from_file(file_content, filename)
 
@@ -202,23 +260,7 @@ def extract_resume_data(file_content: bytes, filename: str) -> dict:
 
     text = text[:6000]
 
-    response = client.chat.completions.create(
-        model=GROQ_MODEL,
-        temperature=0.0,
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
-            },
-            {
-                "role": "user",
-                "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-            }
-        ]
-    )
-
-    raw = response.choices[0].message.content.strip()
+    raw = call_groq_with_retry(text)
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
 
