@@ -5,4 +5,14 @@ nixPkgs = ["python310", "python310Packages.pip"]
 cmds = ["pip install -r requirements.txt --break-system-packages"]
 
 [start]
-cmd = "python3 -m gunicorn app:app"
+cmd = "python3 -m gunicorn app:app"[phases.setup]
+nixPkgs = ["python310", "python310Packages.pip"]
+
+[phases.install]
+cmds = [
+  "python3 -m venv /app/venv",
+  "/app/venv/bin/pip install -r requirements.txt"
+]
+
+[start]
+cmd = "/app/venv/bin/gunicorn app:app --bind 0.0.0.0:$PORT"
