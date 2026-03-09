@@ -5,4 +5,4 @@ nixPkgs = ["python310", "python310Packages.pip"]
 cmds = ["pip install -r requirements.txt --break-system-packages"]
 
 [start]
-cmd = "gunicorn app:app"
+cmd = "python3 -m gunicorn app:app"
