@@ -33,9 +33,22 @@ function createClient() {
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       headless: true,
       args: [
-        '--no-sandbox', '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage', '--disable-gpu',
-        '--no-first-run', '--no-zygote', '--single-process',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--metrics-recording-only',
+        '--mute-audio',
+        '--no-first-run',
+        '--no-zygote',
+        '--safebrowsing-disable-auto-update',
+        '--single-process',
       ],
     },
   });
@@ -75,7 +88,7 @@ function createClient() {
 
   client.initialize().catch((err) => {
     console.error('[WA] Init error:', err.message);
-    waStatus = 'disconnected';
+    waStatus = 'error';
     waClient = null;
   });
 
