@@ -14,13 +14,13 @@ COPY static/ ./static/
 
 EXPOSE 5000
 
-# gthread: built into gunicorn, handles concurrent SSE + other requests
-# threads 10 = up to 10 concurrent requests per worker
-# timeout 0 = never kill a worker (SSE streams are long-lived by design)
+# gevent worker: handles long-lived SSE streams without blocking other requests
+# timeout 300: allows up to 5 min per request (enough for ~20 resumes at ~10s each)
+# workers 2: allows one request to process while another serves health checks
 CMD gunicorn app:app \
     --bind 0.0.0.0:${PORT:-5000} \
-    --worker-class gthread \
-    --workers 1 \
-    --threads 10 \
-    --timeout 0 \
-    --keep-alive 5
+    --worker-class gevent \
+    --workers 2 \
+    --timeout 300 \
+    --keep-alive 5 \
+    --log-level info

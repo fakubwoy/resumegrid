@@ -4,6 +4,7 @@ import os
 import json
 import re
 import tempfile
+import time
 import pdfplumber
 import pypdf
 import docx2txt
@@ -12,19 +13,14 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 UPLOAD_FOLDER = tempfile.mkdtemp()
-
-# Max concurrent Groq calls — stay under rate limits
-MAX_WORKERS = 5
 
 CANONICAL_FIELDS = {
     "full_name": ["name", "full name", "candidate name", "applicant name", "your name"],
@@ -84,7 +80,7 @@ COLUMN_HEADERS = {
 }
 
 
-def extract_hyperlinks_from_pdf(tmp_path: str) -> list[str]:
+def extract_hyperlinks_from_pdf(tmp_path):
     urls = []
     try:
         reader = pypdf.PdfReader(tmp_path)
@@ -108,7 +104,7 @@ def extract_hyperlinks_from_pdf(tmp_path: str) -> list[str]:
     return urls
 
 
-def classify_urls(urls: list[str]) -> dict:
+def classify_urls(urls):
     result = {}
     for url in urls:
         url_lower = url.lower()
@@ -123,7 +119,7 @@ def classify_urls(urls: list[str]) -> dict:
     return result
 
 
-def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dict]:
+def extract_text_from_file(file_content, filename):
     ext = Path(filename).suffix.lower()
 
     if ext == ".pdf":
@@ -142,7 +138,10 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
             url_overrides = classify_urls(urls)
             return text, url_overrides
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     elif ext in [".doc", ".docx"]:
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -153,12 +152,15 @@ def extract_text_from_file(file_content: bytes, filename: str) -> tuple[str, dic
             url_overrides = extract_hyperlinks_from_docx(tmp_path)
             return text, url_overrides
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     return file_content.decode("utf-8", errors="ignore"), {}
 
 
-def extract_hyperlinks_from_docx(tmp_path: str) -> dict:
+def extract_hyperlinks_from_docx(tmp_path):
     urls = []
     try:
         from docx import Document
@@ -173,7 +175,7 @@ def extract_hyperlinks_from_docx(tmp_path: str) -> dict:
     return classify_urls(urls)
 
 
-def get_extraction_prompt() -> str:
+def get_extraction_prompt():
     return """Extract ALL information from this resume and return it as a JSON object.
 
 Include these fields (use null if not found):
@@ -184,37 +186,28 @@ Include these fields (use null if not found):
 - companies_worked (comma-separated list), most_recent_company, most_recent_role, most_recent_duration, total_companies
 - certifications, languages_spoken, projects, achievements
 - last_ctc (last/current CTC or salary - if not explicitly mentioned, leave as null)
-- current_status (determine from resume context: "Employed" if currently working, "Not Employed" if between jobs/seeking opportunities, "Fresher" if no work experience - infer from context)
+- current_status ("Employed" if currently working, "Not Employed" if between jobs, "Fresher" if no work experience)
 
-For current_status, analyze the resume:
-- If mentions "current" role or dates like "2023-Present" → "Employed"
-- If most recent job ended in past or mentions "seeking" → "Not Employed"
-- If no work experience section or only internships/projects → "Fresher"
+For current_status:
+- If mentions "current" role or dates like "2023-Present" -> "Employed"
+- If most recent job ended in past or mentions "seeking" -> "Not Employed"
+- If no work experience or only internships/projects -> "Fresher"
 
 Return ONLY valid JSON with no explanation or markdown."""
 
 
-def parse_retry_seconds(error_message: str) -> float:
-    """
-    Parse the wait time from a Groq 429 error message.
-    Handles formats like: "Please try again in 7m40.511999999s"
-    or just "Please try again in 45.3s"
-    Returns seconds as float, or a default fallback.
-    """
-    # Try "Xm Ys" format
+def parse_retry_seconds(error_message):
     m = re.search(r'try again in (\d+)m([\d.]+)s', str(error_message))
     if m:
         return int(m.group(1)) * 60 + float(m.group(2))
-    # Try just "Xs" format
     m = re.search(r'try again in ([\d.]+)s', str(error_message))
     if m:
         return float(m.group(1))
-    # Fallback: 60s
-    return 60.0
+    return 30.0
 
 
-def call_groq_with_retry(text: str, max_retries: int = 3) -> str:
-    """Call Groq API, automatically waiting and retrying on TPD/TPM 429s."""
+def call_groq_with_retry(text, max_retries=5):
+    """Call Groq API. Max wait capped at 90s to avoid Gunicorn worker timeout."""
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
@@ -240,19 +233,16 @@ def call_groq_with_retry(text: str, max_retries: int = 3) -> str:
 
             if is_rate_limit and attempt < max_retries - 1:
                 wait = parse_retry_seconds(err_str)
-                # Cap single wait at 20 minutes to avoid absurdly long hangs
-                wait = min(wait + 2, 1200)
-                import time
+                wait = min(wait + 2, 90)  # Hard cap at 90s
                 time.sleep(wait)
-                continue  # retry
+                continue
 
-            # Not a rate limit, or out of retries — re-raise
             raise
 
-    raise RuntimeError("Max retries exceeded")
+    raise RuntimeError("Max retries exceeded for Groq API")
 
 
-def extract_resume_data(file_content: bytes, filename: str) -> dict:
+def extract_resume_data(file_content, filename):
     text, url_overrides = extract_text_from_file(file_content, filename)
 
     if not text or len(text.strip()) < 50:
@@ -280,7 +270,7 @@ def extract_resume_data(file_content: bytes, filename: str) -> dict:
     return data
 
 
-def normalize_fields(data: dict) -> dict:
+def normalize_fields(data):
     normalized = {}
     for key, value in data.items():
         if value is None or value == "" or value == "null":
@@ -300,7 +290,7 @@ def normalize_fields(data: dict) -> dict:
     return normalized
 
 
-def create_excel(all_data: list) -> str:
+def create_excel(all_data):
     wb = Workbook()
     ws = wb.active
     ws.title = "Candidates"
@@ -375,8 +365,7 @@ def create_excel(all_data: list) -> str:
     return output_path
 
 
-def sse_event(data: dict) -> str:
-    """Format a Server-Sent Event."""
+def sse_event(data):
     return f"data: {json.dumps(data)}\n\n"
 
 
@@ -393,15 +382,14 @@ def health():
 @app.route("/extract", methods=["POST"])
 def extract():
     """
-    Streaming SSE endpoint. Processes files concurrently and emits progress
-    events as each file completes, then a final 'done' event with the summary.
+    Streaming SSE endpoint. Processes files SEQUENTIALLY (one at a time)
+    to avoid Gunicorn worker timeouts and Groq rate limits.
     """
     if "files" not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
 
-    # Read all file content eagerly before streaming (can't read from request inside generator)
     file_payloads = []
     for file in files:
         if not file.filename:
@@ -419,45 +407,54 @@ def extract():
         results = []
         errors = []
         total = len(file_payloads)
-        completed = 0
-        lock = threading.Lock()
 
-        # Emit start event
         yield sse_event({"type": "start", "total": total})
 
-        def process_one(payload):
+        for i, payload in enumerate(file_payloads):
             filename = payload["filename"]
+            completed = i + 1
+
             if payload["error"]:
-                return {"ok": False, "filename": filename, "error": payload["error"]}
+                errors.append({"file": filename, "error": payload["error"]})
+                yield sse_event({
+                    "type": "progress",
+                    "filename": filename,
+                    "ok": False,
+                    "error": payload["error"],
+                    "completed": completed,
+                    "total": total,
+                    "pct": round((completed / total) * 90)
+                })
+                continue
+
             try:
                 data = extract_resume_data(payload["content"], filename)
                 data["filename"] = filename
-                return {"ok": True, "filename": filename, "data": data}
+                results.append(data)
+                yield sse_event({
+                    "type": "progress",
+                    "filename": filename,
+                    "ok": True,
+                    "error": None,
+                    "completed": completed,
+                    "total": total,
+                    "pct": round((completed / total) * 90)
+                })
             except Exception as e:
-                return {"ok": False, "filename": filename, "error": str(e)}
+                errors.append({"file": filename, "error": str(e)})
+                yield sse_event({
+                    "type": "progress",
+                    "filename": filename,
+                    "ok": False,
+                    "error": str(e),
+                    "completed": completed,
+                    "total": total,
+                    "pct": round((completed / total) * 90)
+                })
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(process_one, p): p["filename"] for p in file_payloads}
-
-            for future in as_completed(futures):
-                result = future.result()
-                with lock:
-                    completed += 1
-                    if result["ok"]:
-                        results.append(result["data"])
-                    else:
-                        errors.append({"file": result["filename"], "error": result["error"]})
-
-                    pct = round((completed / total) * 90)  # reserve last 10% for Excel gen
-                    yield sse_event({
-                        "type": "progress",
-                        "filename": result["filename"],
-                        "ok": result["ok"],
-                        "error": result.get("error"),
-                        "completed": completed,
-                        "total": total,
-                        "pct": pct
-                    })
+            # Small pause between files to stay within Groq rate limits
+            if i < total - 1:
+                time.sleep(0.5)
 
         if results:
             try:
@@ -494,7 +491,7 @@ def extract():
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"  # disable nginx/Railway proxy buffering
+            "X-Accel-Buffering": "no"
         }
     )
 
