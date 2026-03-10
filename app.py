@@ -238,6 +238,9 @@ def ocr_pdf(tmp_path, filename):
         filename, elapsed, len(pages), len(text)
     )
     return text
+
+
+def classify_urls(urls):
     result = {}
     for url in urls:
         url_lower = url.lower()
