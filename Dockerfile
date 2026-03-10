@@ -66,7 +66,7 @@ ENV WA_SERVICE_URL=http://localhost:3001
 # ── App source ────────────────────────────────────────────────────
 COPY app.py .
 # FIX: actual filename is gunicorn_conf.py (not gunicorn.conf.py)
-COPY gunicorn_conf.py .
+COPY gunicorn.conf.py .
 COPY static/ ./static/
 
 # ── Startup script ────────────────────────────────────────────────
