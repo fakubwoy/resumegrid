@@ -5,6 +5,7 @@ import json
 import re
 import tempfile
 import time
+import logging
 import pdfplumber
 import pypdf
 import docx2txt
@@ -12,6 +13,26 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+
+# ── Logging setup ──────────────────────────────────────────────────────────────
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("resumegrid")
+
+# Quieten noisy third-party loggers
+logging.getLogger("pdfplumber").setLevel(logging.WARNING)
+logging.getLogger("pdfminer").setLevel(logging.WARNING)
+logging.getLogger("pypdf").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
 
 # ── AI client setup ────────────────────────────────────────────────────────────
 GROQ_API_KEY   = os.environ.get("GROQ_API_KEY")
@@ -22,8 +43,12 @@ if GROQ_API_KEY:
     try:
         from groq import Groq
         groq_client = Groq(api_key=GROQ_API_KEY)
-    except Exception:
+        logger.info("Groq client initialised (model: %s)", "llama-3.3-70b-versatile")
+    except Exception as e:
+        logger.error("Failed to initialise Groq client: %s", e)
         groq_client = None
+else:
+    logger.warning("GROQ_API_KEY not set — Groq provider disabled")
 
 gemini_model = None
 if GEMINI_API_KEY:
@@ -31,8 +56,12 @@ if GEMINI_API_KEY:
         import google.generativeai as genai
         genai.configure(api_key=GEMINI_API_KEY)
         gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-    except Exception:
+        logger.info("Gemini client initialised (model: gemini-2.5-flash)")
+    except Exception as e:
+        logger.error("Failed to initialise Gemini client: %s", e)
         gemini_model = None
+else:
+    logger.warning("GEMINI_API_KEY not set — Gemini provider disabled")
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
@@ -162,6 +191,7 @@ def classify_urls(urls):
 
 def extract_text_from_file(file_content, filename):
     ext = Path(filename).suffix.lower()
+    logger.debug("Extracting text from '%s' (type: %s, size: %d bytes)", filename, ext, len(file_content))
 
     if ext == ".pdf":
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -170,6 +200,7 @@ def extract_text_from_file(file_content, filename):
         try:
             parts = []
             with pdfplumber.open(tmp_path) as pdf:
+                num_pages = len(pdf.pages)
                 for page in pdf.pages:
                     t = page.extract_text()
                     if t:
@@ -177,6 +208,10 @@ def extract_text_from_file(file_content, filename):
             text = "\n".join(parts)
             urls = extract_hyperlinks_from_pdf(tmp_path)
             url_overrides = classify_urls(urls)
+            logger.debug(
+                "'%s' — PDF extracted: %d pages, %d chars, %d hyperlinks found",
+                filename, num_pages, len(text), len(urls)
+            )
             return text, url_overrides
         finally:
             try:
@@ -191,6 +226,10 @@ def extract_text_from_file(file_content, filename):
         try:
             text = docx2txt.process(tmp_path)
             url_overrides = extract_hyperlinks_from_docx(tmp_path)
+            logger.debug(
+                "'%s' — DOCX extracted: %d chars, %d hyperlinks found",
+                filename, len(text) if text else 0, len(url_overrides)
+            )
             return text, url_overrides
         finally:
             try:
@@ -198,6 +237,7 @@ def extract_text_from_file(file_content, filename):
             except Exception:
                 pass
 
+    logger.warning("'%s' — falling back to plain text decode", filename)
     return file_content.decode("utf-8", errors="ignore"), {}
 
 
@@ -253,6 +293,8 @@ def parse_retry_seconds(error_message):
 
 def call_groq(text):
     """Single Groq call (no retry — retry handled by caller)."""
+    logger.debug("Calling Groq (%s), text length: %d chars", GROQ_MODEL, len(text))
+    t0 = time.monotonic()
     response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         temperature=0.0,
@@ -268,17 +310,23 @@ def call_groq(text):
             }
         ]
     )
+    elapsed = time.monotonic() - t0
+    logger.debug("Groq response received in %.2fs", elapsed)
     return response.choices[0].message.content.strip()
 
 
 def call_gemini(text):
     """Single Gemini call."""
+    logger.debug("Calling Gemini (gemini-2.5-flash), text length: %d chars", len(text))
+    t0 = time.monotonic()
     prompt = (
         "You are a resume parser. Extract structured data and return ONLY valid JSON "
         "with no markdown, no backticks, no explanation.\n\n"
         f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
     )
     response = gemini_model.generate_content(prompt)
+    elapsed = time.monotonic() - t0
+    logger.debug("Gemini response received in %.2fs", elapsed)
     raw = response.text.strip()
     # Strip markdown fences if Gemini adds them
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
@@ -308,13 +356,18 @@ def call_ai_with_fallback(text, max_retries=4):
     for i in range(max_retries):
         order.append(primary if i % 2 == 0 else (others[0] if others else primary))
 
+    logger.debug("AI call plan: primary=%s, attempts=%s", primary, order)
+
     last_error = None
     for attempt, provider in enumerate(order):
         try:
+            logger.debug("AI attempt %d/%d using provider: %s", attempt + 1, max_retries, provider)
             if provider == "groq":
-                return call_groq(text), "groq"
+                result = call_groq(text), "groq"
             else:
-                return call_gemini(text), "gemini"
+                result = call_gemini(text), "gemini"
+            logger.debug("AI call succeeded on attempt %d via %s", attempt + 1, provider)
+            return result
 
         except Exception as e:
             err_str = str(e)
@@ -326,6 +379,18 @@ def call_ai_with_fallback(text, max_retries=4):
                 or ('resource_exhausted' in err_str.lower())
             )
 
+            if is_rate_limit:
+                logger.warning(
+                    "Rate limit hit on %s (attempt %d/%d) — %s",
+                    provider, attempt + 1, max_retries,
+                    err_str[:120]
+                )
+            else:
+                logger.error(
+                    "AI error on %s (attempt %d/%d): %s",
+                    provider, attempt + 1, max_retries, err_str[:200]
+                )
+
             # If rate limited and we have an alternative provider, switch immediately
             if is_rate_limit and others:
                 continue  # next iteration uses other provider
@@ -333,6 +398,7 @@ def call_ai_with_fallback(text, max_retries=4):
             # For non-rate-limit errors, wait briefly and retry same provider
             if attempt < len(order) - 1:
                 wait = min(parse_retry_seconds(err_str) + 2, 90) if is_rate_limit else 5
+                logger.info("Waiting %.1fs before retry...", wait)
                 time.sleep(wait)
                 continue
 
@@ -344,14 +410,20 @@ def call_ai_with_fallback(text, max_retries=4):
 # ── Core extraction ───────────────────────────────────────────────────────────
 
 def extract_resume_data(file_content, filename):
+    t0 = time.monotonic()
+    logger.info("Processing '%s' (%d bytes)", filename, len(file_content))
+
     text, url_overrides = extract_text_from_file(file_content, filename)
 
     if not text or len(text.strip()) < 50:
         raise ValueError("Could not extract readable text from file")
 
+    original_len = len(text)
     text = text[:6000]
+    if original_len > 6000:
+        logger.debug("'%s' — text truncated from %d to 6000 chars", filename, original_len)
 
-    raw, _provider_used = call_ai_with_fallback(text)
+    raw, provider_used = call_ai_with_fallback(text)
 
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
@@ -361,14 +433,22 @@ def extract_resume_data(file_content, filename):
     if match:
         try:
             data = normalize_fields(json.loads(match.group()))
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning("'%s' — JSON parse failed (%s), raw snippet: %s", filename, e, raw[:100])
+    else:
+        logger.warning("'%s' — no JSON object found in AI response, raw snippet: %s", filename, raw[:100])
 
     for field, url in url_overrides.items():
         existing = data.get(field, "")
         if not existing or not existing.startswith("http"):
             data[field] = url
 
+    fields_found = [k for k in data if data[k]]
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "Finished '%s' in %.2fs via %s — %d fields extracted",
+        filename, elapsed, provider_used, len(fields_found)
+    )
     return data
 
 
@@ -477,11 +557,13 @@ def sse_event(data):
 
 @app.route("/")
 def index():
+    logger.debug("GET / — serving index.html")
     return app.send_static_file('index.html')
 
 
 @app.route("/health")
 def health():
+    logger.debug("GET /health")
     providers = {
         "groq": groq_client is not None,
         "gemini": gemini_model is not None
@@ -496,6 +578,7 @@ def extract():
     Uses Groq + Gemini in round-robin; auto-falls back on rate limits.
     """
     if "files" not in request.files:
+        logger.warning("POST /extract — no files in request")
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
@@ -506,17 +589,24 @@ def extract():
             continue
         ext = Path(file.filename).suffix.lower()
         if ext not in [".pdf", ".doc", ".docx"]:
+            logger.warning("Rejected unsupported file type: '%s'", file.filename)
             file_payloads.append({"filename": file.filename, "content": None, "error": "Unsupported file type"})
         else:
-            file_payloads.append({"filename": file.filename, "content": file.read(), "error": None})
+            content = file.read()
+            logger.debug("Accepted file: '%s' (%d bytes)", file.filename, len(content))
+            file_payloads.append({"filename": file.filename, "content": content, "error": None})
 
     if not file_payloads:
+        logger.warning("POST /extract — no valid files after filtering")
         return jsonify({"error": "No valid files found"}), 400
+
+    logger.info("POST /extract — starting batch of %d file(s)", len(file_payloads))
 
     def generate():
         results = []
         errors  = []
         total   = len(file_payloads)
+        batch_start = time.monotonic()
 
         yield sse_event({"type": "start", "total": total})
 
@@ -525,6 +615,7 @@ def extract():
             completed = i + 1
 
             if payload["error"]:
+                logger.warning("[%d/%d] Skipping '%s': %s", completed, total, filename, payload["error"])
                 errors.append({"file": filename, "error": payload["error"]})
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": False,
@@ -534,15 +625,18 @@ def extract():
                 continue
 
             try:
+                logger.info("[%d/%d] Extracting '%s'", completed, total, filename)
                 data = extract_resume_data(payload["content"], filename)
                 data["filename"] = filename
                 results.append(data)
+                logger.info("[%d/%d] '%s' — OK", completed, total, filename)
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": True,
                     "error": None, "completed": completed,
                     "total": total, "pct": round((completed / total) * 90)
                 })
             except Exception as e:
+                logger.error("[%d/%d] '%s' — FAILED: %s", completed, total, filename, e, exc_info=True)
                 errors.append({"file": filename, "error": str(e)})
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": False,
@@ -554,21 +648,29 @@ def extract():
             if i < total - 1:
                 time.sleep(0.3)
 
+        batch_elapsed = time.monotonic() - batch_start
+
         if results:
             try:
                 create_excel(results)
+                logger.info(
+                    "Batch complete in %.2fs — %d/%d succeeded, %d error(s)",
+                    batch_elapsed, len(results), total, len(errors)
+                )
                 yield sse_event({
                     "type": "done", "success": True,
                     "processed": len(results), "errors": errors,
                     "download_url": "/download", "pct": 100
                 })
             except Exception as e:
+                logger.error("Excel generation failed: %s", e, exc_info=True)
                 yield sse_event({
                     "type": "done", "success": False,
                     "error": f"Excel generation failed: {str(e)}",
                     "processed": 0, "errors": errors, "pct": 0
                 })
         else:
+            logger.error("Batch complete — no resumes could be processed (%d error(s))", len(errors))
             yield sse_event({
                 "type": "done", "success": False,
                 "error": "No resumes could be processed",
@@ -586,7 +688,9 @@ def extract():
 def download():
     excel_path = os.path.join(UPLOAD_FOLDER, "extracted_resumes.xlsx")
     if not os.path.exists(excel_path):
+        logger.warning("GET /download — no Excel file found at %s", excel_path)
         return jsonify({"error": "No file to download"}), 404
+    logger.info("GET /download — serving extracted_resumes.xlsx")
     return send_file(
         excel_path, as_attachment=True,
         download_name="extracted_resumes.xlsx",
@@ -596,4 +700,5 @@ def download():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    logger.info("Starting Flask dev server on port %d", port)
     app.run(host="0.0.0.0", port=port, debug=False)
