@@ -8,17 +8,56 @@ import time
 import pdfplumber
 import pypdf
 import docx2txt
-from groq import Groq
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+# ── AI client setup ────────────────────────────────────────────────────────────
+GROQ_API_KEY   = os.environ.get("GROQ_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    except Exception:
+        groq_client = None
+
+gemini_model = None
+if GEMINI_API_KEY:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+        gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+    except Exception:
+        gemini_model = None
+
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
+# Round-robin provider state
+_provider_index = 0  # 0 = Groq, 1 = Gemini
+
+
+def _next_provider():
+    """Return ('groq'|'gemini') cycling between available providers."""
+    global _provider_index
+    providers = []
+    if groq_client:
+        providers.append("groq")
+    if gemini_model:
+        providers.append("gemini")
+    if not providers:
+        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
+    provider = providers[_provider_index % len(providers)]
+    _provider_index += 1
+    return provider
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 app = Flask(__name__, static_folder='static')
 CORS(app)
-
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-GROQ_MODEL = "llama-3.3-70b-versatile"
 
 UPLOAD_FOLDER = tempfile.mkdtemp()
 
@@ -79,6 +118,8 @@ COLUMN_HEADERS = {
     "source_file": "Source File", "last_ctc": "Last CTC", "current_status": "Current Status"
 }
 
+
+# ── Text extraction helpers ───────────────────────────────────────────────────
 
 def extract_hyperlinks_from_pdf(tmp_path):
     urls = []
@@ -175,6 +216,8 @@ def extract_hyperlinks_from_docx(tmp_path):
     return classify_urls(urls)
 
 
+# ── AI prompt ─────────────────────────────────────────────────────────────────
+
 def get_extraction_prompt():
     return """Extract ALL information from this resume and return it as a JSON object.
 
@@ -196,6 +239,8 @@ For current_status:
 Return ONLY valid JSON with no explanation or markdown."""
 
 
+# ── Provider call functions ────────────────────────────────────────────────────
+
 def parse_retry_seconds(error_message):
     m = re.search(r'try again in (\d+)m([\d.]+)s', str(error_message))
     if m:
@@ -206,41 +251,97 @@ def parse_retry_seconds(error_message):
     return 30.0
 
 
-def call_groq_with_retry(text, max_retries=5):
-    """Call Groq API. Max wait capped at 90s to avoid Gunicorn worker timeout."""
-    for attempt in range(max_retries):
+def call_groq(text):
+    """Single Groq call (no retry — retry handled by caller)."""
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        temperature=0.0,
+        max_tokens=2000,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
+            },
+            {
+                "role": "user",
+                "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
+            }
+        ]
+    )
+    return response.choices[0].message.content.strip()
+
+
+def call_gemini(text):
+    """Single Gemini call."""
+    prompt = (
+        "You are a resume parser. Extract structured data and return ONLY valid JSON "
+        "with no markdown, no backticks, no explanation.\n\n"
+        f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
+    )
+    response = gemini_model.generate_content(prompt)
+    raw = response.text.strip()
+    # Strip markdown fences if Gemini adds them
+    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw)
+    return raw.strip()
+
+
+def call_ai_with_fallback(text, max_retries=4):
+    """
+    Try providers in round-robin order. On rate-limit from one provider,
+    immediately try the other. Falls back to waiting only if both are exhausted.
+    """
+    providers_available = []
+    if groq_client:
+        providers_available.append("groq")
+    if gemini_model:
+        providers_available.append("gemini")
+
+    if not providers_available:
+        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
+
+    # Determine starting provider via round-robin
+    primary = _next_provider()
+    # Build ordered list: [primary, other, primary, other, ...]
+    others = [p for p in providers_available if p != primary]
+    order = []
+    for i in range(max_retries):
+        order.append(primary if i % 2 == 0 else (others[0] if others else primary))
+
+    last_error = None
+    for attempt, provider in enumerate(order):
         try:
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
-                temperature=0.0,
-                max_tokens=2000,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-                    }
-                ]
-            )
-            return response.choices[0].message.content.strip()
+            if provider == "groq":
+                return call_groq(text), "groq"
+            else:
+                return call_gemini(text), "gemini"
 
         except Exception as e:
             err_str = str(e)
-            is_rate_limit = '429' in err_str and 'rate_limit_exceeded' in err_str
+            last_error = e
+            is_rate_limit = (
+                ('429' in err_str and 'rate_limit_exceeded' in err_str)  # Groq
+                or ('429' in err_str)                                      # Gemini
+                or ('quota' in err_str.lower())
+                or ('resource_exhausted' in err_str.lower())
+            )
 
-            if is_rate_limit and attempt < max_retries - 1:
-                wait = parse_retry_seconds(err_str)
-                wait = min(wait + 2, 90)  # Hard cap at 90s
+            # If rate limited and we have an alternative provider, switch immediately
+            if is_rate_limit and others:
+                continue  # next iteration uses other provider
+
+            # For non-rate-limit errors, wait briefly and retry same provider
+            if attempt < len(order) - 1:
+                wait = min(parse_retry_seconds(err_str) + 2, 90) if is_rate_limit else 5
                 time.sleep(wait)
                 continue
 
             raise
 
-    raise RuntimeError("Max retries exceeded for Groq API")
+    raise RuntimeError(f"All AI providers failed after {max_retries} attempts. Last error: {last_error}")
 
+
+# ── Core extraction ───────────────────────────────────────────────────────────
 
 def extract_resume_data(file_content, filename):
     text, url_overrides = extract_text_from_file(file_content, filename)
@@ -250,7 +351,8 @@ def extract_resume_data(file_content, filename):
 
     text = text[:6000]
 
-    raw = call_groq_with_retry(text)
+    raw, _provider_used = call_ai_with_fallback(text)
+
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
 
@@ -290,6 +392,8 @@ def normalize_fields(data):
     return normalized
 
 
+# ── Excel generation ──────────────────────────────────────────────────────────
+
 def create_excel(all_data):
     wb = Workbook()
     ws = wb.active
@@ -305,13 +409,13 @@ def create_excel(all_data):
             final_columns.append(key)
     final_columns.append("source_file")
 
-    header_font = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-    header_fill = PatternFill("solid", start_color="1A3A5C")
+    header_font  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+    header_fill  = PatternFill("solid", start_color="1A3A5C")
     header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    cell_font = Font(name="Arial", size=9)
-    cell_align = Alignment(vertical="top", wrap_text=True)
-    alt_fill = PatternFill("solid", start_color="EBF2FA")
-    thin_border = Border(
+    cell_font    = Font(name="Arial", size=9)
+    cell_align   = Alignment(vertical="top", wrap_text=True)
+    alt_fill     = PatternFill("solid", start_color="EBF2FA")
+    thin_border  = Border(
         left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
         top=Side(style='thin', color='CCCCCC'), bottom=Side(style='thin', color='CCCCCC')
     )
@@ -365,6 +469,8 @@ def create_excel(all_data):
     return output_path
 
 
+# ── Flask routes ──────────────────────────────────────────────────────────────
+
 def sse_event(data):
     return f"data: {json.dumps(data)}\n\n"
 
@@ -376,14 +482,18 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok"})
+    providers = {
+        "groq": groq_client is not None,
+        "gemini": gemini_model is not None
+    }
+    return jsonify({"status": "ok", "providers": providers})
 
 
 @app.route("/extract", methods=["POST"])
 def extract():
     """
-    Streaming SSE endpoint. Processes files SEQUENTIALLY (one at a time)
-    to avoid Gunicorn worker timeouts and Groq rate limits.
+    Streaming SSE endpoint. Processes files sequentially.
+    Uses Groq + Gemini in round-robin; auto-falls back on rate limits.
     """
     if "files" not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
@@ -405,25 +515,21 @@ def extract():
 
     def generate():
         results = []
-        errors = []
-        total = len(file_payloads)
+        errors  = []
+        total   = len(file_payloads)
 
         yield sse_event({"type": "start", "total": total})
 
         for i, payload in enumerate(file_payloads):
-            filename = payload["filename"]
+            filename  = payload["filename"]
             completed = i + 1
 
             if payload["error"]:
                 errors.append({"file": filename, "error": payload["error"]})
                 yield sse_event({
-                    "type": "progress",
-                    "filename": filename,
-                    "ok": False,
-                    "error": payload["error"],
-                    "completed": completed,
-                    "total": total,
-                    "pct": round((completed / total) * 90)
+                    "type": "progress", "filename": filename, "ok": False,
+                    "error": payload["error"], "completed": completed,
+                    "total": total, "pct": round((completed / total) * 90)
                 })
                 continue
 
@@ -432,67 +538,47 @@ def extract():
                 data["filename"] = filename
                 results.append(data)
                 yield sse_event({
-                    "type": "progress",
-                    "filename": filename,
-                    "ok": True,
-                    "error": None,
-                    "completed": completed,
-                    "total": total,
-                    "pct": round((completed / total) * 90)
+                    "type": "progress", "filename": filename, "ok": True,
+                    "error": None, "completed": completed,
+                    "total": total, "pct": round((completed / total) * 90)
                 })
             except Exception as e:
                 errors.append({"file": filename, "error": str(e)})
                 yield sse_event({
-                    "type": "progress",
-                    "filename": filename,
-                    "ok": False,
-                    "error": str(e),
-                    "completed": completed,
-                    "total": total,
-                    "pct": round((completed / total) * 90)
+                    "type": "progress", "filename": filename, "ok": False,
+                    "error": str(e), "completed": completed,
+                    "total": total, "pct": round((completed / total) * 90)
                 })
 
-            # Small pause between files to stay within Groq rate limits
+            # Small pause between files
             if i < total - 1:
-                time.sleep(0.5)
+                time.sleep(0.3)
 
         if results:
             try:
                 create_excel(results)
                 yield sse_event({
-                    "type": "done",
-                    "success": True,
-                    "processed": len(results),
-                    "errors": errors,
-                    "download_url": "/download",
-                    "pct": 100
+                    "type": "done", "success": True,
+                    "processed": len(results), "errors": errors,
+                    "download_url": "/download", "pct": 100
                 })
             except Exception as e:
                 yield sse_event({
-                    "type": "done",
-                    "success": False,
+                    "type": "done", "success": False,
                     "error": f"Excel generation failed: {str(e)}",
-                    "processed": 0,
-                    "errors": errors,
-                    "pct": 0
+                    "processed": 0, "errors": errors, "pct": 0
                 })
         else:
             yield sse_event({
-                "type": "done",
-                "success": False,
+                "type": "done", "success": False,
                 "error": "No resumes could be processed",
-                "processed": 0,
-                "errors": errors,
-                "pct": 0
+                "processed": 0, "errors": errors, "pct": 0
             })
 
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     )
 
 
