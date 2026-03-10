@@ -14,6 +14,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+# OCR imports — optional, gracefully degraded if unavailable
+try:
+    from pdf2image import convert_from_path as pdf_to_images
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 # ── Logging setup ──────────────────────────────────────────────────────────────
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -33,6 +41,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
+if OCR_AVAILABLE:
+    logger.info("OCR support enabled (pdf2image + pytesseract)")
+else:
+    logger.warning("OCR support NOT available — image-based PDFs will fail silently. "
+                   "Install pdf2image and pytesseract to enable OCR.")
 
 # ── AI client setup ────────────────────────────────────────────────────────────
 GROQ_API_KEY   = os.environ.get("GROQ_API_KEY")
@@ -174,7 +187,57 @@ def extract_hyperlinks_from_pdf(tmp_path):
     return urls
 
 
-def classify_urls(urls):
+def is_image_based_pdf(text, page_count):
+    """
+    Detect PDFs where text extraction failed or produced garbage.
+    Two signals:
+      1. Very low character yield  — fewer than 300 chars per page on average.
+      2. High (cid:N) garbling ratio — >10% of word tokens are encoding artifacts,
+         which indicates a font that couldn't be decoded (common in scanned/image PDFs).
+    Either signal alone is sufficient to trigger OCR.
+    """
+    stripped = text.strip() if text else ""
+
+    # Signal 1: low yield
+    if len(stripped) < page_count * 300:
+        return True
+
+    # Signal 2: garbled font encoding
+    import re as _re
+    cid_hits = len(_re.findall(r'\(cid:\d+\)', stripped))
+    word_count = len(stripped.split())
+    if word_count > 0 and cid_hits / word_count > 0.10:
+        return True
+
+    return False
+
+
+def ocr_pdf(tmp_path, filename):
+    """
+    Render each PDF page to an image and run Tesseract OCR.
+    Returns the combined OCR text, or raises if OCR is unavailable.
+    """
+    if not OCR_AVAILABLE:
+        raise RuntimeError(
+            "OCR is not available. Install pdf2image and pytesseract "
+            "to process image-based PDFs."
+        )
+    logger.info("'%s' — running OCR (image-based PDF detected)", filename)
+    t0 = time.monotonic()
+    pages = pdf_to_images(tmp_path, dpi=200)
+    parts = []
+    for i, page_img in enumerate(pages):
+        page_text = pytesseract.image_to_string(page_img, lang="eng")
+        if page_text.strip():
+            parts.append(page_text)
+        logger.debug("'%s' — OCR page %d/%d: %d chars", filename, i + 1, len(pages), len(page_text))
+    text = "\n".join(parts)
+    elapsed = time.monotonic() - t0
+    logger.info(
+        "'%s' — OCR complete in %.2fs: %d pages → %d chars",
+        filename, elapsed, len(pages), len(text)
+    )
+    return text
     result = {}
     for url in urls:
         url_lower = url.lower()
@@ -212,6 +275,31 @@ def extract_text_from_file(file_content, filename):
                 "'%s' — PDF extracted: %d pages, %d chars, %d hyperlinks found",
                 filename, num_pages, len(text), len(urls)
             )
+
+            # Fallback to OCR if the PDF appears to be image-based
+            if is_image_based_pdf(text, num_pages):
+                logger.info(
+                    "'%s' — low text yield (%d chars across %d pages), "
+                    "treating as image-based PDF and attempting OCR",
+                    filename, len(text.strip()), num_pages
+                )
+                try:
+                    ocr_text = ocr_pdf(tmp_path, filename)
+                    if len(ocr_text.strip()) > len(text.strip()):
+                        logger.info(
+                            "'%s' — OCR improved text yield: %d → %d chars",
+                            filename, len(text.strip()), len(ocr_text.strip())
+                        )
+                        text = ocr_text
+                    else:
+                        logger.warning(
+                            "'%s' — OCR did not improve yield (%d chars), keeping original",
+                            filename, len(ocr_text.strip())
+                        )
+                except Exception as ocr_err:
+                    logger.error("'%s' — OCR failed: %s", filename, ocr_err)
+                    # Continue with whatever pdfplumber managed to extract
+
             return text, url_overrides
         finally:
             try:
