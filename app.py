@@ -6,6 +6,7 @@ import re
 import tempfile
 import time
 import logging
+import base64
 import pdfplumber
 import pypdf
 import docx2txt
@@ -713,7 +714,9 @@ def create_excel(all_data):
 
     output_path = os.path.join(UPLOAD_FOLDER, "extracted_resumes.xlsx")
     wb.save(output_path)
-    return output_path
+    with open(output_path, "rb") as f:
+        excel_bytes = f.read()
+    return output_path, excel_bytes
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
@@ -861,7 +864,8 @@ def extract():
 
         if results:
             try:
-                create_excel(results)
+                _, excel_bytes = create_excel(results)
+                excel_b64 = base64.b64encode(excel_bytes).decode("utf-8")
                 logger.info(
                     "Batch complete in %.2fs — %d/%d succeeded, %d error(s)",
                     batch_elapsed, len(results), total, len(errors)
@@ -870,7 +874,8 @@ def extract():
                     "type": "done", "success": True,
                     "processed": len(results), "errors": errors,
                     "download_url": "/download", "pct": 100,
-                    "results": results
+                    "results": results,
+                    "excel_b64": excel_b64
                 })
             except Exception as e:
                 logger.error("Excel generation failed: %s", e, exc_info=True)

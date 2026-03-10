@@ -972,6 +972,7 @@
     let isProcessing = false;
     let allResults = [];   // stores extracted data for preview table
     let previewVisible = false;
+    let excelB64 = null;  // base64 Excel from server, used for direct download
 
     const dropZone       = document.getElementById('dropZone');
     const fileInput      = document.getElementById('fileInput');
@@ -1225,6 +1226,7 @@
       progressSection.classList.add('active');
       hideResults();
       allResults = [];
+      excelB64 = null;
 
       const jd = jdInput.value.trim();
       setProgress(5, jd ? 'Uploading files (scoring enabled)...' : 'Uploading files to server...');
@@ -1294,6 +1296,8 @@
 
               // Use the full results array from done event if available
               if (event.results && event.results.length > 0) allResults = event.results;
+              // Store Excel for direct download
+              if (event.excel_b64) excelB64 = event.excel_b64;
 
               setProgress(100, 'Complete!');
               statProcessed.textContent = event.processed;
@@ -1338,11 +1342,29 @@
       }
     });
 
-    downloadBtn.addEventListener('click', () => { window.open(`${API_BASE}/download`, '_blank'); });
+    downloadBtn.addEventListener('click', () => {
+      if (excelB64) {
+        // Download directly from the base64 blob — works even if server restarted
+        const byteChars = atob(excelB64);
+        const byteArr = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([byteArr], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'extracted_resumes.xlsx';
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Fallback: hit server endpoint
+        window.open(`${API_BASE}/download`, '_blank');
+      }
+    });
 
     newBatchBtn.addEventListener('click', () => {
       files = [];
       allResults = [];
+      excelB64 = null;
       statProcessed.textContent = '0';
       statDupes.textContent = '0';
       sortCol = null; sortAsc = true;
