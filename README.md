@@ -1,182 +1,220 @@
-# ResumeGrid — Bulk Resume Extractor (Railway Edition)
+# ResumeGrid — Bulk Resume Extractor + WhatsApp Outreach
 
-Upload multiple PDF/DOC/DOCX resumes and get a clean Excel file with every candidate's data.
-Powered by **Groq** using `llama-3.3-70b-versatile` — fast, free-tier available, open-source model.
+Upload multiple PDF/DOC/DOCX resumes → get a clean Excel file.  
+Automatically message candidates on WhatsApp about missing resume fields.
 
-**NEW:** Includes recruiter-critical fields: **Last CTC** and **Current Status** (Employed/Not Employed/Fresher)
+Powered by **Groq** (`llama-3.3-70b-versatile`) and/or **Gemini** (`gemini-2.5-flash`).  
+Deployed as a **single Docker container on Railway** — Flask + WhatsApp service run together.
 
-## 🚀 Quick Deploy to Railway
+---
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template)
-
-### Railway Deployment Steps
-
-1. **Click the Railway button above** or go to [railway.app](https://railway.app)
-
-2. **Connect your GitHub account** and create a new project from this repository
-
-3. **Set environment variable:**
-   - Go to your Railway project
-   - Click on "Variables" tab
-   - Add: `GROQ_API_KEY` = `your-groq-api-key-here`
-   - Get a free Groq API key at: https://console.groq.com/keys
-
-4. **Deploy:**
-   - Railway will automatically detect the configuration
-   - Build and deploy will start automatically
-   - Your app will be live at: `https://your-app-name.railway.app`
-
-5. **Access your app:**
-   - Click the generated domain in Railway dashboard
-   - Or set up a custom domain in Railway settings
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 resumegrid/
-├── app.py                  ← Flask API + static file serving
+│
 ├── static/
-│   └── index.html          ← Frontend UI
-├── requirements.txt        ← Python dependencies
-├── Procfile                ← Railway/Heroku deployment config
-├── railway.json            ← Railway-specific settings
-├── nixpacks.toml          ← Build configuration
+│   └── index.html              ← Full frontend (vanilla JS, no build step)
+│
+├── whatsapp-service/
+│   ├── server.js               ← Node.js WhatsApp microservice (whatsapp-web.js)
+│   └── package.json            ← Node dependencies
+│
+├── app.py                      ← Flask API + /wa/* proxy routes
+├── gunicorn.conf.py            ← Gunicorn config (reads $PORT from Railway)
+├── requirements.txt            ← Python dependencies
+│
+├── Dockerfile                  ← Single container: Python + Node + Chromium
+├── start.sh                    ← Boots Node WA service (bg) + Gunicorn (fg)
+├── railway.json                ← Railway build/deploy settings
 ├── .gitignore
 └── README.md
 ```
 
-## 🎯 Features
+### How the two services communicate
 
-### Extracted Fields (28 columns total)
+```
+Browser
+  │
+  │  HTTP (Railway public URL)
+  ▼
+Flask / Gunicorn  (port $PORT — Railway-assigned)
+  │
+  │  HTTP localhost:3001  (internal, never exposed publicly)
+  ▼
+WhatsApp Node Service  (port 3001)
+  │
+  │  whatsapp-web.js / Puppeteer / Chromium
+  ▼
+WhatsApp Web
+```
 
-| Category      | Fields |
-|---------------|--------|
-| Contact       | Name, Email, Phone, Location, LinkedIn, GitHub, Portfolio |
-| Career        | Current Title, Years of Experience, Summary |
-| Skills        | Skills, Programming Languages, Frameworks |
-| Education     | Degree, Institution, Graduation Year, GPA |
-| Work History  | Companies Worked, Most Recent Company/Role/Duration, Total Companies |
-| **Recruiter Fields** | **Last CTC, Current Status** |
-| Other         | Certifications, Languages Spoken, Projects, Achievements |
+Flask exposes `/wa/*` routes that proxy straight to the internal Node service.  
+The Node service is **never reachable from the public internet** — only from Flask.
 
-### Smart Current Status Detection
+---
 
-The AI automatically determines candidate status:
-- **Employed**: Has current role or dates like "2023-Present"
-- **Not Employed**: Recent job ended or mentions "seeking opportunities"
-- **Fresher**: No work experience or only internships/projects
+## Railway Deployment (step-by-step)
 
-## 🔧 Local Development
+### 1. Push to GitHub
+
+```bash
+git init
+git add .
+git commit -m "initial"
+gh repo create resumegrid --public --push   # or push to an existing repo
+```
+
+### 2. Create Railway project
+
+1. Go to [railway.app](https://railway.app) → **New Project**
+2. Choose **Deploy from GitHub repo** → select your repo
+3. Railway auto-detects `railway.json` and uses the `Dockerfile`
+
+### 3. Set environment variables
+
+In Railway → your service → **Variables**, add:
+
+| Variable        | Required | Description |
+|-----------------|----------|-------------|
+| `GROQ_API_KEY`  | ✅ at least one | [console.groq.com/keys](https://console.groq.com/keys) |
+| `GEMINI_API_KEY`| ✅ at least one | Google AI Studio |
+| `WA_PORT`       | optional | Default `3001` — leave unless there's a conflict |
+| `WA_SERVICE_URL`| optional | Default `http://localhost:3001` — do not change |
+| `LOG_LEVEL`     | optional | `INFO` or `DEBUG` |
+
+> Railway automatically sets `PORT` — you don't add it yourself.
+
+### 4. Deploy
+
+Railway builds the Docker image and deploys automatically on every push to main.  
+Your app will be live at `https://<your-project>.up.railway.app`.
+
+---
+
+## Local Development
 
 ### Prerequisites
+
 - Python 3.10+
-- Groq API key (free at https://console.groq.com/keys)
+- Node.js 18+
+- Chromium or Chrome installed
+- A Groq and/or Gemini API key
 
 ### Setup
 
 ```bash
-# Clone the repository
+# 1. Clone
 git clone <your-repo-url>
 cd resumegrid
 
-# Create virtual environment
+# 2. Python env
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Set environment variable
-export GROQ_API_KEY='your-groq-api-key-here'
+# 3. Node env
+cd whatsapp-service
+npm install
+cd ..
 
-# Run the app
+# 4. Environment
+export GROQ_API_KEY="your-key"
+export GEMINI_API_KEY="your-key"          # optional
+export WA_SERVICE_URL="http://localhost:3001"
+export PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"  # or your Chrome path
+
+# 5. Start WhatsApp service (terminal 1)
+node whatsapp-service/server.js
+
+# 6. Start Flask (terminal 2)
 python app.py
 ```
 
-Open http://localhost:5000 in your browser
-
-## 📊 How It Works
-
-1. **Upload**: Drag & drop or select multiple resume files (PDF/DOC/DOCX)
-2. **Extract**: Backend extracts text using pdfplumber (PDF) or docx2txt (DOC/DOCX)
-3. **Parse**: Groq's llama-3.3-70b-versatile analyzes each resume
-4. **Structure**: AI extracts all 28 fields including Last CTC and Status
-5. **Export**: Excel file generated with one row per candidate
-6. **Download**: Get your structured data instantly
-
-## 🛠️ Configuration
-
-### Environment Variables
-
-Required:
-- `GROQ_API_KEY`: Your Groq API key
-
-Optional:
-- `PORT`: Server port (default: 5000, Railway sets this automatically)
-
-### Field Normalization
-
-The system handles various field name aliases automatically:
-
-- "Mobile" / "Cell" / "Tel" → Phone
-- "Objective" / "Profile" / "About Me" → Summary
-- "University" / "College" / "School" → Institution
-- "Tech Stack" / "Technologies" / "Competencies" → Skills
-- "CTC" / "Salary" / "Compensation" → Last CTC
-- "Employment Status" / "Work Status" → Current Status
-
-## 🎨 Tech Stack
-
-- **Backend**: Flask + Gunicorn
-- **AI Model**: Groq llama-3.3-70b-versatile
-- **Text Extraction**: pdfplumber, pypdf, docx2txt
-- **Excel Generation**: openpyxl
-- **Frontend**: Vanilla JavaScript (no build step)
-- **Deployment**: Railway (also compatible with Heroku, Render)
-
-## 📝 Notes
-
-### For Recruiters
-
-The new fields help track candidates better:
-
-- **Last CTC**: Extracted when mentioned; blank if not stated
-- **Current Status**: Automatically inferred from resume context
-  - Helps prioritize actively employed vs. immediately available candidates
-  - Identifies fresh graduates automatically
-
-### Accuracy Tips
-
-- **CTC**: Will only appear if candidate mentioned it in resume
-- **Status**: Inferred from work history dates and context
-- **Best Results**: Use well-formatted resumes (DOCX or PDF)
-- **DOC Files**: May have lower extraction quality; use DOCX when possible
-
-## 🐛 Troubleshooting
-
-**App not starting on Railway?**
-- Check that `GROQ_API_KEY` is set in environment variables
-- View build logs in Railway dashboard
-
-**Extraction errors?**
-- Verify your Groq API key is valid and has quota
-- Check that uploaded files are valid PDF/DOC/DOCX
-- Ensure resume text is extractable (not scanned images without OCR)
-
-**Missing fields in output?**
-- Last CTC only appears if mentioned in resume
-- Current Status is always attempted but may be blank if unclear
-
-## 📄 License
-
-MIT License - feel free to use and modify
-
-## 🙏 Credits
-
-- AI Model: [Groq](https://groq.com) (llama-3.3-70b-versatile)
-- Deployment: [Railway](https://railway.app)
-- Icon/UI Design: Custom built with modern design principles
+Open [http://localhost:5000](http://localhost:5000)
 
 ---
 
-**Version 2.0** — Now with recruiter-critical fields!
+## Features
+
+### Resume Extraction (28 fields)
+
+| Category       | Fields |
+|----------------|--------|
+| Contact        | Name, Email, Phone, Location, LinkedIn, GitHub, Portfolio |
+| Career         | Current Title, Years of Experience, Summary |
+| Skills         | Skills, Programming Languages, Frameworks |
+| Education      | Degree, Institution, Graduation Year, GPA |
+| Work History   | Companies, Most Recent Company/Role/Duration, Total Companies |
+| Recruiter      | **Last CTC**, **Current Status** (Employed / Not Employed / Fresher) |
+| Other          | Certifications, Languages Spoken, Projects, Achievements |
+
+### WhatsApp Outreach
+
+After extracting resumes:
+
+1. Click **WhatsApp Outreach** in the results panel
+2. Click **Connect WhatsApp** → scan QR code with your phone
+3. The panel shows only candidates who have a phone number but are **missing important fields**
+4. Filter by missing field (e.g. show only candidates missing "Last CTC")
+5. Customize the message template — `{name}` and `{missing_fields}` are replaced automatically
+6. Select candidates → **Send to Selected**
+
+Messages are sent with a 1.5–3 s random delay between each to avoid WhatsApp rate limits.
+
+### Other Features
+
+- **Dual AI providers** — Groq + Gemini round-robin with automatic fallback on rate limits
+- **OCR fallback** — image-based PDFs processed via Tesseract
+- **Duplicate detection** — flags resumes with matching email or phone
+- **JD match scoring** — paste a job description to score all candidates 0–100
+- **Live preview table** — see extracted data before downloading
+
+---
+
+## Environment Variables Reference
+
+| Variable              | Default                      | Description |
+|-----------------------|------------------------------|-------------|
+| `GROQ_API_KEY`        | —                            | Groq API key |
+| `GEMINI_API_KEY`      | —                            | Google Gemini API key |
+| `PORT`                | `5000`                       | Set by Railway automatically |
+| `WA_PORT`             | `3001`                       | Internal WhatsApp service port |
+| `WA_SERVICE_URL`      | `http://localhost:3001`      | Flask → WA service URL |
+| `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium`  | Chromium binary path |
+| `LOG_LEVEL`           | `INFO`                       | Python log level |
+
+---
+
+## Troubleshooting
+
+**WhatsApp panel shows "Disconnected" after deploy**  
+→ Expected. Click **Connect WhatsApp** and scan the QR. The session persists in `/app/.wwebjs_auth` as long as the container isn't restarted. On Railway, the container restarts on redeploy — you'll need to scan again.
+
+**QR never appears**  
+→ Chromium may have failed to start. Check Railway logs for `[WA Service]` lines. Ensure `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium` is set (it's set in the Dockerfile by default).
+
+**"No AI provider configured"**  
+→ Set at least one of `GROQ_API_KEY` or `GEMINI_API_KEY` in Railway Variables.
+
+**Build fails on Railway**  
+→ Chromium + Node adds ~500 MB to the image. Railway's Hobby plan handles this fine. Free plan may time out on first build — retry once.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Vanilla JS (zero build step) |
+| Backend | Flask 3 + Gunicorn + gevent |
+| AI | Groq `llama-3.3-70b-versatile` + Google `gemini-2.5-flash` |
+| WhatsApp | whatsapp-web.js + Puppeteer + Chromium |
+| PDF text | pdfplumber + pypdf |
+| OCR | Tesseract + pdf2image |
+| Excel | openpyxl |
+| Deployment | Railway (single Docker container) |
+
+---
+
+**Version 3.0** — Railway-native single-container with WhatsApp outreach

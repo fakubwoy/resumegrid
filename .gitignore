@@ -12,6 +12,15 @@ env/
 dist/
 build/
 
+# Node
+node_modules/
+whatsapp-service/node_modules/
+npm-debug.log*
+
+# WhatsApp session data (do NOT commit — regenerated at runtime)
+.wwebjs_auth/
+.wwebjs_cache/
+
 # IDE
 .vscode/
 .idea/
@@ -20,14 +29,12 @@ build/
 
 # Logs
 *.log
-backend.log
-frontend.log
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Temp files
+# Temp / uploads
 *.tmp
 temp/
 tmp/

@@ -536,6 +536,232 @@
 
     .error-item:last-child { margin-bottom: 0; }
 
+    /* ── WhatsApp Panel ──────────────────────────────────────────────── */
+    .wa-panel {
+      margin-top: 32px;
+      background: var(--surface);
+      border: 1px solid #25d36644;
+      border-radius: 16px;
+      overflow: hidden;
+      display: none;
+    }
+    .wa-panel.active { display: block; }
+
+    .wa-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .wa-header:hover { background: var(--surface2); }
+    .wa-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .wa-icon {
+      width: 38px; height: 38px;
+      background: #25d366;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+    }
+    .wa-header-title {
+      font-size: 15px; font-weight: 700; color: var(--text);
+    }
+    .wa-header-sub {
+      font-size: 12px; color: var(--muted); margin-top: 2px;
+    }
+    .wa-status-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--muted);
+      display: inline-block; margin-right: 5px;
+      transition: background 0.3s;
+    }
+    .wa-status-dot.ready { background: #25d366; box-shadow: 0 0 6px #25d366; }
+    .wa-status-dot.qr_ready, .wa-status-dot.initializing, .wa-status-dot.authenticated {
+      background: var(--yellow);
+    }
+    .wa-status-dot.auth_failure, .wa-status-dot.disconnected { background: var(--red); }
+
+    .wa-body {
+      padding: 24px;
+      display: none;
+    }
+    .wa-body.open { display: block; }
+
+    /* QR + connect area */
+    .wa-connect-row {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    .wa-qr-box {
+      width: 200px; min-height: 200px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .wa-qr-box img { width: 100%; border-radius: 10px; }
+    .wa-qr-placeholder {
+      text-align: center;
+      padding: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .wa-qr-placeholder .qr-emoji { font-size: 40px; margin-bottom: 8px; }
+
+    .wa-connect-info { flex: 1; }
+    .wa-connect-info h3 {
+      font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--text);
+    }
+    .wa-connect-info p {
+      font-size: 13px; color: var(--muted); line-height: 1.7; margin-bottom: 14px;
+    }
+    .wa-connect-info ol {
+      font-size: 13px; color: var(--muted); line-height: 2;
+      padding-left: 18px; margin-bottom: 16px;
+    }
+    .wa-btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .btn-wa {
+      padding: 9px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-wa:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn-wa:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-wa-green { background: #25d366; color: #000; }
+    .btn-wa-red   { background: rgba(248,113,113,0.15); color: var(--red); border: 1px solid rgba(248,113,113,0.35); }
+    .btn-wa-blue  { background: rgba(79,142,247,0.15); color: var(--accent); border: 1px solid rgba(79,142,247,0.35); }
+
+    /* Candidate rows */
+    .wa-candidates-title {
+      font-size: 13px; font-weight: 700; color: var(--text);
+      margin-bottom: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .wa-count-badge {
+      background: rgba(37,211,102,0.15);
+      color: #25d366;
+      font-size: 11px;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-family: var(--mono);
+    }
+
+    .wa-field-pills {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;
+    }
+    .wa-field-pill {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: var(--mono);
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      transition: all 0.15s;
+    }
+    .wa-field-pill.active {
+      background: rgba(79,142,247,0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .wa-cand-list {
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+    .wa-cand-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      transition: background 0.12s;
+    }
+    .wa-cand-row:last-child { border-bottom: none; }
+    .wa-cand-row:hover { background: var(--surface2); }
+    .wa-cand-check { accent-color: #25d366; width: 15px; height: 15px; flex-shrink: 0; cursor: pointer; }
+    .wa-cand-name { flex: 1; font-weight: 600; color: var(--text); }
+    .wa-cand-phone { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+    .wa-cand-missing {
+      font-size: 11px;
+      color: var(--yellow);
+      display: flex; flex-wrap: wrap; gap: 4px;
+    }
+    .wa-missing-chip {
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.3);
+      padding: 1px 6px; border-radius: 4px;
+      font-family: var(--mono);
+    }
+    .wa-cand-sent { color: #25d366; font-size: 11px; font-weight: 700; }
+    .wa-cand-fail { color: var(--red); font-size: 11px; font-weight: 700; }
+
+    .wa-msg-template {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .wa-msg-template label {
+      font-size: 11px; font-family: var(--mono); color: var(--muted);
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; display: block;
+    }
+    .wa-msg-template textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: var(--sans);
+      line-height: 1.6;
+      padding: 10px 12px;
+      resize: vertical;
+      min-height: 90px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .wa-msg-template textarea:focus { border-color: #25d366; }
+    .wa-template-vars {
+      font-size: 11px; color: var(--muted); margin-top: 6px;
+    }
+    .wa-template-vars code {
+      background: var(--surface); padding: 1px 5px; border-radius: 3px;
+      font-size: 11px; color: var(--accent);
+    }
+
+    .wa-send-bar {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    }
+    .wa-send-status {
+      flex: 1; font-size: 12px; color: var(--muted);
+      font-family: var(--mono);
+    }
+
     /* Footer */
     footer {
       margin-top: 80px;
@@ -927,6 +1153,9 @@
         <button class="btn btn-secondary" id="previewToggleBtn" style="display:none">
           👁 Preview Data
         </button>
+        <button class="btn btn-secondary" id="waOpenBtn" style="background:rgba(37,211,102,0.12);border-color:#25d36655;color:#25d366;">
+          💬 WhatsApp Outreach
+        </button>
         <button class="btn btn-secondary" id="newBatchBtn">
           🔄 New Batch
         </button>
@@ -936,6 +1165,91 @@
     <div class="error-log" id="errorLog">
       <div class="error-title">⚠ Errors</div>
       <div id="errorItems"></div>
+    </div>
+
+    <!-- WhatsApp Outreach Panel -->
+    <div class="wa-panel" id="waPanel">
+      <div class="wa-header" id="waHeaderToggle">
+        <div class="wa-header-left">
+          <div class="wa-icon">💬</div>
+          <div>
+            <div class="wa-header-title">WhatsApp Outreach</div>
+            <div class="wa-header-sub">
+              <span class="wa-status-dot" id="waStatusDot"></span>
+              <span id="waStatusText">Disconnected</span>
+              <span id="waPhoneTag" style="margin-left:10px;font-family:var(--mono);color:var(--accent);font-size:11px;display:none"></span>
+            </div>
+          </div>
+        </div>
+        <span id="waChevron" style="color:var(--muted);font-size:14px">▼</span>
+      </div>
+
+      <div class="wa-body" id="waBody">
+        <!-- Connect section -->
+        <div class="wa-connect-row">
+          <div class="wa-qr-box" id="waQrBox">
+            <div class="wa-qr-placeholder">
+              <div class="qr-emoji">📱</div>
+              <div>QR code<br>appears here</div>
+            </div>
+          </div>
+          <div class="wa-connect-info">
+            <h3>Connect Your WhatsApp</h3>
+            <p>Scan the QR code with WhatsApp on your phone to connect. Once connected, you can message candidates about missing resume fields.</p>
+            <ol>
+              <li>Click <strong>Connect WhatsApp</strong></li>
+              <li>Open WhatsApp → Settings → Linked Devices</li>
+              <li>Tap <strong>Link a Device</strong> and scan the QR</li>
+            </ol>
+            <div class="wa-btn-row">
+              <button class="btn-wa btn-wa-green" id="waConnectBtn">📱 Connect WhatsApp</button>
+              <button class="btn-wa btn-wa-blue" id="waRefreshBtn">↻ Refresh Status</button>
+              <button class="btn-wa btn-wa-red" id="waDisconnectBtn" style="display:none">✕ Disconnect</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Candidate outreach section (shown once ready) -->
+        <div id="waOutreachSection" style="display:none">
+          <hr style="border:none;border-top:1px solid var(--border);margin-bottom:20px">
+
+          <div class="wa-candidates-title">
+            <span>📋 Candidates with Missing Fields</span>
+            <span class="wa-count-badge" id="waCandCount">0 candidates</span>
+          </div>
+
+          <!-- Field filter pills -->
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Filter by missing field:</div>
+          <div class="wa-field-pills" id="waFieldPills"></div>
+
+          <div class="wa-cand-list" id="waCandList">
+            <div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
+              Extract resumes first to see candidates here
+            </div>
+          </div>
+
+          <!-- Message template -->
+          <div class="wa-msg-template">
+            <label>Message Template</label>
+            <textarea id="waMsgTemplate">Hi {name} 👋, we reviewed your resume and noticed a few details are missing that would help us process your application faster. Could you please share: {missing_fields}? 
+
+Looking forward to hearing from you!
+Best regards, HR Team</textarea>
+            <div class="wa-template-vars">
+              Variables: <code>{name}</code> — candidate name &nbsp; <code>{missing_fields}</code> — comma-separated missing fields
+            </div>
+          </div>
+
+          <!-- Send bar -->
+          <div class="wa-send-bar">
+            <button class="btn-wa btn-wa-green" id="waSendBtn">
+              📤 Send to Selected
+            </button>
+            <button class="btn-wa btn-wa-blue" id="waSelectAllBtn">☑ Select All with Phone</button>
+            <div class="wa-send-status" id="waSendStatus">Select candidates and click Send</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Live Preview Table -->
@@ -1372,6 +1686,311 @@
       hideResults();
       progressSection.classList.remove('active');
     });
+    // ── WhatsApp Integration ─────────────────────────────────────────────────
+
+    const waPanel          = document.getElementById('waPanel');
+    const waBody           = document.getElementById('waBody');
+    const waHeaderToggle   = document.getElementById('waHeaderToggle');
+    const waChevron        = document.getElementById('waChevron');
+    const waStatusDot      = document.getElementById('waStatusDot');
+    const waStatusText     = document.getElementById('waStatusText');
+    const waPhoneTag       = document.getElementById('waPhoneTag');
+    const waQrBox          = document.getElementById('waQrBox');
+    const waConnectBtn     = document.getElementById('waConnectBtn');
+    const waRefreshBtn     = document.getElementById('waRefreshBtn');
+    const waDisconnectBtn  = document.getElementById('waDisconnectBtn');
+    const waOutreachSection= document.getElementById('waOutreachSection');
+    const waCandList       = document.getElementById('waCandList');
+    const waCandCount      = document.getElementById('waCandCount');
+    const waFieldPills     = document.getElementById('waFieldPills');
+    const waMsgTemplate    = document.getElementById('waMsgTemplate');
+    const waSendBtn        = document.getElementById('waSendBtn');
+    const waSelectAllBtn   = document.getElementById('waSelectAllBtn');
+    const waSendStatus     = document.getElementById('waSendStatus');
+    const waOpenBtn        = document.getElementById('waOpenBtn');
+
+    let waCurrentStatus = 'disconnected';
+    let waPollingTimer  = null;
+    let activeMissingFilter = null; // field key filter
+    let waSendResults = {}; // phone -> 'sent'|'failed'
+
+    // Fields considered "important" to ask about
+    const WA_IMPORTANT_FIELDS = [
+      { key: 'phone',            label: 'Phone' },
+      { key: 'email',            label: 'Email' },
+      { key: 'location',         label: 'Location' },
+      { key: 'current_title',    label: 'Current Title' },
+      { key: 'years_of_experience', label: 'Experience' },
+      { key: 'last_ctc',         label: 'Last CTC' },
+      { key: 'current_status',   label: 'Current Status' },
+      { key: 'linkedin',         label: 'LinkedIn' },
+      { key: 'skills',           label: 'Skills' },
+      { key: 'education_degree', label: 'Education' },
+    ];
+
+    function getMissingFields(candidate) {
+      return WA_IMPORTANT_FIELDS
+        .filter(f => !candidate[f.key] || candidate[f.key].trim() === '')
+        .map(f => f.label);
+    }
+
+    function updateWaStatus(statusData) {
+      const { status, qr, phone } = statusData;
+      waCurrentStatus = status;
+
+      // Dot colour
+      waStatusDot.className = `wa-status-dot ${status}`;
+
+      const labels = {
+        disconnected: 'Disconnected',
+        initializing: 'Initializing...',
+        qr_ready:     'Scan QR Code',
+        authenticated:'Authenticated',
+        ready:        '● Connected',
+        auth_failure: 'Auth Failed',
+      };
+      waStatusText.textContent = labels[status] || status;
+      waStatusText.style.color = status === 'ready' ? '#25d366' : '';
+
+      // QR display
+      if (qr) {
+        waQrBox.innerHTML = `<img src="${qr}" alt="WhatsApp QR Code" />`;
+      } else if (status === 'initializing') {
+        waQrBox.innerHTML = `<div class="wa-qr-placeholder"><div class="qr-emoji">⏳</div><div>Generating QR…</div></div>`;
+      } else if (status === 'ready' || status === 'authenticated') {
+        waQrBox.innerHTML = `<div class="wa-qr-placeholder"><div class="qr-emoji">✅</div><div>Connected!</div></div>`;
+      } else {
+        waQrBox.innerHTML = `<div class="wa-qr-placeholder"><div class="qr-emoji">📱</div><div>QR code<br>appears here</div></div>`;
+      }
+
+      // Phone tag
+      if (phone) {
+        waPhoneTag.textContent = `+${phone}`;
+        waPhoneTag.style.display = '';
+      } else {
+        waPhoneTag.style.display = 'none';
+      }
+
+      // Buttons
+      const isReady = status === 'ready';
+      const isConnecting = status === 'initializing' || status === 'qr_ready' || status === 'authenticated';
+      waConnectBtn.disabled = isReady || isConnecting;
+      waConnectBtn.textContent = isConnecting ? '⏳ Connecting...' : '📱 Connect WhatsApp';
+      waDisconnectBtn.style.display = (isReady || isConnecting) ? '' : 'none';
+
+      // Show outreach section when ready
+      waOutreachSection.style.display = isReady ? '' : 'none';
+      if (isReady) renderWaCandidates();
+
+      // Stop polling when ready or failed
+      if (isReady || status === 'auth_failure') {
+        stopWaPolling();
+      }
+    }
+
+    async function fetchWaStatus() {
+      try {
+        const res = await fetch(`${API_BASE}/wa/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        updateWaStatus(data);
+      } catch (_) { /* WA service may not be running */ }
+    }
+
+    function startWaPolling() {
+      if (waPollingTimer) return;
+      waPollingTimer = setInterval(fetchWaStatus, 2500);
+    }
+    function stopWaPolling() {
+      if (waPollingTimer) { clearInterval(waPollingTimer); waPollingTimer = null; }
+    }
+
+    waHeaderToggle.addEventListener('click', () => {
+      const open = waBody.classList.toggle('open');
+      waChevron.textContent = open ? '▲' : '▼';
+      if (open) fetchWaStatus();
+    });
+
+    waOpenBtn.addEventListener('click', () => {
+      waPanel.classList.add('active');
+      waBody.classList.add('open');
+      waChevron.textContent = '▲';
+      waPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      fetchWaStatus();
+    });
+
+    waConnectBtn.addEventListener('click', async () => {
+      try {
+        waConnectBtn.disabled = true;
+        waConnectBtn.textContent = '⏳ Connecting...';
+        const res = await fetch(`${API_BASE}/wa/connect`, { method: 'POST' });
+        const data = await res.json();
+        updateWaStatus({ status: data.status, qr: null, phone: null });
+        startWaPolling();
+      } catch (e) {
+        showToast('WhatsApp service unreachable. Is it running?', 'error');
+        waConnectBtn.disabled = false;
+        waConnectBtn.textContent = '📱 Connect WhatsApp';
+      }
+    });
+
+    waRefreshBtn.addEventListener('click', fetchWaStatus);
+
+    waDisconnectBtn.addEventListener('click', async () => {
+      if (!confirm('Disconnect WhatsApp and clear session?')) return;
+      stopWaPolling();
+      try {
+        await fetch(`${API_BASE}/wa/disconnect`, { method: 'POST' });
+        updateWaStatus({ status: 'disconnected', qr: null, phone: null });
+        showToast('WhatsApp disconnected', 'success');
+      } catch (_) {}
+    });
+
+    // ── Candidate list rendering ──────────────────────────────────────────────
+
+    function renderWaFieldPills() {
+      const allMissing = new Set();
+      allResults.forEach(r => getMissingFields(r).forEach(f => allMissing.add(f)));
+      waFieldPills.innerHTML = '';
+      if (allMissing.size === 0) return;
+
+      // "All" pill
+      const all = document.createElement('span');
+      all.className = `wa-field-pill${activeMissingFilter === null ? ' active' : ''}`;
+      all.textContent = 'All';
+      all.onclick = () => { activeMissingFilter = null; renderWaFieldPills(); renderWaCandidates(); };
+      waFieldPills.appendChild(all);
+
+      WA_IMPORTANT_FIELDS.filter(f => allMissing.has(f.label)).forEach(f => {
+        const pill = document.createElement('span');
+        pill.className = `wa-field-pill${activeMissingFilter === f.label ? ' active' : ''}`;
+        pill.textContent = f.label;
+        pill.onclick = () => {
+          activeMissingFilter = activeMissingFilter === f.label ? null : f.label;
+          renderWaFieldPills();
+          renderWaCandidates();
+        };
+        waFieldPills.appendChild(pill);
+      });
+    }
+
+    function renderWaCandidates() {
+      renderWaFieldPills();
+
+      // Filter: must have phone + at least one missing field
+      let candidates = allResults.filter(r => {
+        if (r.duplicate_of) return false;
+        const phone = r.phone || '';
+        if (!phone.trim()) return false; // need phone to message
+        const missing = getMissingFields(r);
+        if (missing.length === 0) return false;
+        if (activeMissingFilter && !missing.includes(activeMissingFilter)) return false;
+        return true;
+      });
+
+      waCandCount.textContent = `${candidates.length} candidate${candidates.length !== 1 ? 's' : ''}`;
+
+      if (candidates.length === 0) {
+        waCandList.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">
+          ${allResults.length === 0 ? 'Extract resumes first.' : 'All candidates with phone numbers have complete profiles, or no phone numbers found.'}
+        </div>`;
+        return;
+      }
+
+      waCandList.innerHTML = '';
+      candidates.forEach((c, idx) => {
+        const phone = (c.phone || '').trim();
+        const missing = getMissingFields(c);
+        const sentStatus = waSendResults[phone];
+
+        const row = document.createElement('div');
+        row.className = 'wa-cand-row';
+        row.innerHTML = `
+          <input type="checkbox" class="wa-cand-check" id="wa-chk-${idx}" data-phone="${phone}" data-name="${c.full_name || ''}" data-missing="${missing.join(', ')}" ${sentStatus ? 'disabled' : ''}>
+          <div class="wa-cand-name">${c.full_name || c.filename || 'Unknown'}</div>
+          <div class="wa-cand-phone">${phone}</div>
+          ${sentStatus === 'sent'
+            ? '<div class="wa-cand-sent">✓ Sent</div>'
+            : sentStatus === 'failed'
+            ? '<div class="wa-cand-fail">✗ Failed</div>'
+            : `<div class="wa-cand-missing">${missing.map(m => `<span class="wa-missing-chip">${m}</span>`).join('')}</div>`
+          }
+        `;
+        waCandList.appendChild(row);
+      });
+    }
+
+    waSelectAllBtn.addEventListener('click', () => {
+      const boxes = waCandList.querySelectorAll('.wa-cand-check:not(:disabled)');
+      const allChecked = [...boxes].every(b => b.checked);
+      boxes.forEach(b => b.checked = !allChecked);
+    });
+
+    waSendBtn.addEventListener('click', async () => {
+      if (waCurrentStatus !== 'ready') {
+        showToast('Connect WhatsApp first', 'error'); return;
+      }
+      const checked = [...waCandList.querySelectorAll('.wa-cand-check:checked')];
+      if (checked.length === 0) {
+        showToast('Select at least one candidate', 'error'); return;
+      }
+
+      const template = waMsgTemplate.value.trim();
+      if (!template) { showToast('Message template is empty', 'error'); return; }
+
+      const messages = checked.map(chk => {
+        const name = chk.dataset.name || 'there';
+        const missing = chk.dataset.missing || 'some details';
+        const msg = template
+          .replace(/{name}/g, name)
+          .replace(/{missing_fields}/g, missing);
+        return { phone: chk.dataset.phone, name, message: msg };
+      });
+
+      waSendBtn.disabled = true;
+      waSendBtn.textContent = `⏳ Sending to ${messages.length}...`;
+      waSendStatus.textContent = `Sending ${messages.length} message${messages.length !== 1 ? 's' : ''}...`;
+
+      try {
+        const res = await fetch(`${API_BASE}/wa/send-bulk`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages }),
+        });
+        const data = await res.json();
+        if (!data.ok && !data.results) throw new Error(data.error || 'Send failed');
+
+        (data.results || []).forEach(r => {
+          waSendResults[r.phone] = r.ok ? 'sent' : 'failed';
+        });
+
+        renderWaCandidates();
+        waSendStatus.textContent = `✓ Sent ${data.sent} · ${data.failed} failed`;
+        showToast(`WhatsApp: ${data.sent} sent, ${data.failed} failed`, data.failed === 0 ? 'success' : 'error');
+      } catch (e) {
+        waSendStatus.textContent = `Error: ${e.message}`;
+        showToast('Send failed: ' + e.message, 'error');
+      } finally {
+        waSendBtn.disabled = false;
+        waSendBtn.textContent = '📤 Send to Selected';
+      }
+    });
+
+    // Show WA panel automatically after extraction
+    const _origExtractSuccess = (function() {
+      // Patch: after allResults populated, show WA panel
+      const observer = new MutationObserver(() => {
+        if (resultCard.classList.contains('active') && allResults.length > 0) {
+          waPanel.classList.add('active');
+          renderWaCandidates();
+        }
+      });
+      observer.observe(resultCard, { attributes: true, attributeFilter: ['class'] });
+    })();
+
+    // Initial status check (quiet)
+    fetchWaStatus();
+
   </script>
 </body>
 </html>

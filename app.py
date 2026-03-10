@@ -913,6 +913,62 @@ def download():
     )
 
 
+# ── WhatsApp proxy routes ─────────────────────────────────────────────────────
+
+import urllib.request as _urllib_req
+
+WA_SERVICE_URL = os.environ.get("WA_SERVICE_URL", "http://localhost:3001")
+
+
+def _wa_request(method, path, body=None):
+    """Simple wrapper to call the Node WhatsApp service."""
+    url = f"{WA_SERVICE_URL}{path}"
+    data = json.dumps(body).encode() if body else None
+    headers = {"Content-Type": "application/json"}
+    req = _urllib_req.Request(url, data=data, headers=headers, method=method)
+    try:
+        with _urllib_req.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read()), resp.status
+    except _urllib_req.HTTPError as e:
+        return json.loads(e.read()), e.code
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}, 503
+
+
+@app.route("/wa/status")
+def wa_status():
+    data, code = _wa_request("GET", "/status")
+    return jsonify(data), code
+
+
+@app.route("/wa/connect", methods=["POST"])
+def wa_connect():
+    data, code = _wa_request("POST", "/connect")
+    return jsonify(data), code
+
+
+@app.route("/wa/disconnect", methods=["POST"])
+def wa_disconnect():
+    data, code = _wa_request("POST", "/disconnect")
+    return jsonify(data), code
+
+
+@app.route("/wa/send", methods=["POST"])
+def wa_send():
+    body = request.get_json(silent=True) or {}
+    data, code = _wa_request("POST", "/send", body)
+    return jsonify(data), code
+
+
+@app.route("/wa/send-bulk", methods=["POST"])
+def wa_send_bulk():
+    body = request.get_json(silent=True) or {}
+    data, code = _wa_request("POST", "/send-bulk", body)
+    return jsonify(data), code
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     logger.info("Starting Flask dev server on port %d", port)
