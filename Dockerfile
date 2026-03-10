@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Build tools
     gcc \
     curl \
+    wget \
     gnupg \
     ca-certificates \
     # PDF / OCR
@@ -64,13 +65,14 @@ ENV WA_SERVICE_URL=http://localhost:3001
 
 # ── App source ────────────────────────────────────────────────────
 COPY app.py .
-COPY gunicorn.conf.py .
+# FIX: actual filename is gunicorn_conf.py (not gunicorn.conf.py)
+COPY gunicorn_conf.py .
 COPY static/ ./static/
 
 # ── Startup script ────────────────────────────────────────────────
 COPY start.sh .
 RUN chmod +x start.sh
 
-# Railway injects $PORT at runtime — Gunicorn reads it via gunicorn.conf.py
+# Railway injects $PORT at runtime — Gunicorn reads it via gunicorn_conf.py
 EXPOSE 3001
 CMD ["./start.sh"]
