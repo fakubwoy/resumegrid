@@ -36,4 +36,4 @@ else
 fi
 
 echo "[start.sh] Starting Gunicorn on port ${PORT}..."
-exec gunicorn app:app --config gunicorn_conf.py
+exec gunicorn app:app --config gunicorn.conf.py
