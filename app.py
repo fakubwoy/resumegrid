@@ -135,13 +135,14 @@ CANONICAL_FIELDS = {
 }
 
 COLUMN_ORDER = [
+    "match_score", "match_reason",
     "full_name", "email", "phone", "location", "linkedin", "github", "portfolio",
     "current_title", "years_of_experience", "summary",
     "skills", "programming_languages", "frameworks",
     "education_degree", "education_institution", "education_year", "education_gpa",
     "companies_worked", "most_recent_company", "most_recent_role", "most_recent_duration", "total_companies",
     "certifications", "languages_spoken", "projects", "achievements",
-    "last_ctc", "current_status"
+    "last_ctc", "current_status", "duplicate_of"
 ]
 
 COLUMN_HEADERS = {
@@ -157,7 +158,9 @@ COLUMN_HEADERS = {
     "most_recent_duration": "Most Recent Duration", "total_companies": "Total Companies",
     "certifications": "Certifications", "languages_spoken": "Languages Spoken",
     "projects": "Key Projects", "achievements": "Achievements/Awards",
-    "source_file": "Source File", "last_ctc": "Last CTC", "current_status": "Current Status"
+    "source_file": "Source File", "last_ctc": "Last CTC", "current_status": "Current Status",
+    "match_score": "Match Score (/100)", "match_reason": "Match Reason",
+    "duplicate_of": "Duplicate Of"
 }
 
 
@@ -368,6 +371,58 @@ For current_status:
 - If no work experience or only internships/projects -> "Fresher"
 
 Return ONLY valid JSON with no explanation or markdown."""
+
+
+def get_scoring_prompt(job_description):
+    return f"""You are a technical recruiter. Score this resume against the job description below.
+
+JOB DESCRIPTION:
+{job_description[:2000]}
+
+Score the candidate from 0 to 100 based on:
+- Skills & technology match (40 points)
+- Years of experience relevance (20 points)
+- Role/title alignment (20 points)
+- Education & certifications (10 points)
+- Overall fit (10 points)
+
+Return ONLY a JSON object with exactly these fields:
+{{
+  "match_score": <integer 0-100>,
+  "match_reason": "<one sentence summary of why they fit or don't fit>"
+}}
+
+No markdown, no explanation, just the JSON."""
+
+
+def score_resume_against_jd(resume_data, job_description, provider_used_hint=None):
+    """Score a single already-extracted resume dict against a JD. Returns (score_int, reason_str)."""
+    # Build a compact resume summary from extracted fields for the scoring call
+    summary_parts = []
+    for field in ["full_name", "current_title", "years_of_experience", "skills",
+                  "programming_languages", "frameworks", "education_degree",
+                  "certifications", "summary", "companies_worked"]:
+        val = resume_data.get(field)
+        if val:
+            summary_parts.append(f"{field}: {val}")
+    resume_summary = "\n".join(summary_parts)
+
+    prompt_text = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description)}"
+
+    try:
+        raw, _ = call_ai_with_fallback(prompt_text, max_retries=3)
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            parsed = json.loads(match.group())
+            score = int(parsed.get("match_score", 0))
+            score = max(0, min(100, score))
+            reason = str(parsed.get("match_reason", ""))
+            return score, reason
+    except Exception as e:
+        logger.warning("Scoring failed for candidate: %s", e)
+    return None, None
 
 
 # ── Provider call functions ────────────────────────────────────────────────────
@@ -609,6 +664,26 @@ def create_excel(all_data):
                 cell.value = value
                 cell.hyperlink = value
                 cell.font = Font(name="Arial", size=9, color="0563C1", underline="single")
+            elif col_key == "match_score" and value:
+                try:
+                    score_val = int(value)
+                    cell.value = score_val
+                    if score_val >= 75:
+                        cell.fill = PatternFill("solid", start_color="C6EFCE")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="276221")
+                    elif score_val >= 50:
+                        cell.fill = PatternFill("solid", start_color="FFEB9C")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="9C6500")
+                    else:
+                        cell.fill = PatternFill("solid", start_color="FFC7CE")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="9C0006")
+                except (ValueError, TypeError):
+                    cell.value = value
+                    cell.font = cell_font
+            elif col_key == "duplicate_of" and value:
+                cell.value = value
+                cell.fill = PatternFill("solid", start_color="FFF2CC")
+                cell.font = Font(name="Arial", size=9, italic=True, color="7F6000")
             else:
                 cell.value = value
                 cell.font = cell_font
@@ -627,7 +702,8 @@ def create_excel(all_data):
         "companies_worked": 35, "most_recent_company": 25, "most_recent_role": 22,
         "most_recent_duration": 15, "total_companies": 12, "certifications": 35,
         "languages_spoken": 20, "projects": 45, "achievements": 35, "source_file": 25,
-        "last_ctc": 18, "current_status": 18
+        "last_ctc": 18, "current_status": 18, "match_score": 14,
+        "match_reason": 45, "duplicate_of": 25
     }
     for col_idx, col_key in enumerate(final_columns, 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = width_map.get(col_key, 20)
@@ -667,12 +743,17 @@ def extract():
     """
     Streaming SSE endpoint. Processes files sequentially.
     Uses Groq + Gemini in round-robin; auto-falls back on rate limits.
+    Supports optional job_description field for match scoring.
+    Detects duplicate candidates by email/phone.
     """
     if "files" not in request.files:
         logger.warning("POST /extract — no files in request")
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
+    job_description = request.form.get("job_description", "").strip()
+    if job_description:
+        logger.info("Job description provided (%d chars) — scoring enabled", len(job_description))
 
     file_payloads = []
     for file in files:
@@ -699,6 +780,10 @@ def extract():
         total   = len(file_payloads)
         batch_start = time.monotonic()
 
+        # Duplicate tracking: maps normalised email/phone -> first candidate name
+        seen_emails  = {}
+        seen_phones  = {}
+
         yield sse_event({"type": "start", "total": total})
 
         for i, payload in enumerate(file_payloads):
@@ -719,12 +804,45 @@ def extract():
                 logger.info("[%d/%d] Extracting '%s'", completed, total, filename)
                 data = extract_resume_data(payload["content"], filename)
                 data["filename"] = filename
+
+                # ── Duplicate detection ───────────────────────────────────────
+                dup_of = None
+                email_key = (data.get("email") or "").lower().strip()
+                phone_key  = re.sub(r'\D', '', data.get("phone") or "")
+
+                if email_key and email_key in seen_emails:
+                    dup_of = seen_emails[email_key]
+                elif phone_key and len(phone_key) >= 7 and phone_key in seen_phones:
+                    dup_of = seen_phones[phone_key]
+
+                if dup_of:
+                    data["duplicate_of"] = dup_of
+                    logger.info("'%s' flagged as duplicate of '%s'", filename, dup_of)
+                else:
+                    candidate_label = data.get("full_name") or filename
+                    if email_key:
+                        seen_emails[email_key] = candidate_label
+                    if phone_key and len(phone_key) >= 7:
+                        seen_phones[phone_key] = candidate_label
+
+                # ── Job match scoring (only if JD provided) ───────────────────
+                if job_description and not dup_of:
+                    try:
+                        score, reason = score_resume_against_jd(data, job_description)
+                        if score is not None:
+                            data["match_score"] = str(score)
+                            data["match_reason"] = reason or ""
+                            logger.info("'%s' — match score: %s/100", filename, score)
+                    except Exception as score_err:
+                        logger.warning("Scoring skipped for '%s': %s", filename, score_err)
+
                 results.append(data)
                 logger.info("[%d/%d] '%s' — OK", completed, total, filename)
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": True,
                     "error": None, "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90)
+                    "total": total, "pct": round((completed / total) * 90),
+                    "data": data
                 })
             except Exception as e:
                 logger.error("[%d/%d] '%s' — FAILED: %s", completed, total, filename, e, exc_info=True)
@@ -751,7 +869,8 @@ def extract():
                 yield sse_event({
                     "type": "done", "success": True,
                     "processed": len(results), "errors": errors,
-                    "download_url": "/download", "pct": 100
+                    "download_url": "/download", "pct": 100,
+                    "results": results
                 })
             except Exception as e:
                 logger.error("Excel generation failed: %s", e, exc_info=True)

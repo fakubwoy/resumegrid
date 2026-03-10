@@ -588,6 +588,240 @@
       .result-actions { flex-direction: column; }
       .toast { right: 16px; left: 16px; max-width: none; }
     }
+
+    /* ── Job Description Panel ──────────────────────────────────────────────── */
+    .jd-panel {
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .jd-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s;
+    }
+
+    .jd-header:hover { background: var(--surface2); }
+
+    .jd-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .jd-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .jd-badge {
+      font-family: var(--mono);
+      font-size: 10px;
+      background: rgba(123,92,240,0.15);
+      color: var(--accent2);
+      border: 1px solid rgba(123,92,240,0.3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .jd-toggle {
+      font-size: 12px;
+      color: var(--muted);
+      transition: transform 0.2s;
+    }
+
+    .jd-toggle.open { transform: rotate(180deg); }
+
+    .jd-body {
+      display: none;
+      padding: 0 24px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .jd-body.open { display: block; }
+
+    .jd-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 12px 0 10px;
+      line-height: 1.5;
+    }
+
+    .jd-textarea {
+      width: 100%;
+      min-height: 140px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      padding: 12px;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+      line-height: 1.6;
+    }
+
+    .jd-textarea:focus { border-color: var(--accent2); }
+    .jd-textarea::placeholder { color: var(--muted); }
+
+    .jd-char-count {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+      margin-top: 6px;
+      font-family: var(--mono);
+    }
+
+    /* ── Preview Table ──────────────────────────────────────────────────────── */
+    .preview-section {
+      margin-top: 24px;
+      display: none;
+    }
+
+    .preview-section.active { display: block; }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .preview-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .preview-subtitle {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .preview-search {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 8px 12px;
+      outline: none;
+      width: 220px;
+      transition: border-color 0.2s;
+    }
+
+    .preview-search:focus { border-color: var(--accent); }
+    .preview-search::placeholder { color: var(--muted); }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: auto;
+      max-height: 420px;
+    }
+
+    table.preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 900px;
+    }
+
+    .preview-table thead th {
+      background: #1A3A5C;
+      color: #fff;
+      font-weight: 700;
+      padding: 10px 14px;
+      text-align: left;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      font-size: 11px;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .preview-table thead th:hover { background: #224d7a; }
+
+    .preview-table tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .preview-table tbody tr:hover { background: rgba(79,142,247,0.06); }
+
+    .preview-table tbody tr:nth-child(even) { background: rgba(28,32,48,0.6); }
+    .preview-table tbody tr:nth-child(even):hover { background: rgba(79,142,247,0.06); }
+
+    .preview-table td {
+      padding: 9px 14px;
+      color: var(--text);
+      vertical-align: top;
+      max-width: 220px;
+    }
+
+    .preview-table td .cell-text {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.4;
+    }
+
+    .score-chip {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 5px;
+    }
+
+    .score-high { background: rgba(52,211,153,0.2); color: #34d399; }
+    .score-mid  { background: rgba(251,191,36,0.2);  color: #fbbf24; }
+    .score-low  { background: rgba(248,113,113,0.2); color: #f87171; }
+
+    .dup-chip {
+      display: inline-block;
+      font-size: 10px;
+      background: rgba(251,191,36,0.15);
+      color: var(--yellow);
+      border: 1px solid rgba(251,191,36,0.3);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: var(--mono);
+    }
+
+    .link-cell {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 11px;
+    }
+
+    .link-cell:hover { text-decoration: underline; }
+
+    .preview-empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -599,7 +833,7 @@
       </div>
       <h1>Bulk Resume Extraction</h1>
       <p class="subtitle">
-        Upload multiple resumes (PDF, DOC, DOCX) and get a clean Excel file with every candidate's data — including Last CTC and Current Status fields for recruiters.
+        Upload multiple resumes (PDF, DOC, DOCX) and get a clean Excel file with every candidate's data — including Last CTC, Current Status, <strong style="color:var(--accent2)">Job Match Scoring</strong>, and <strong style="color:var(--accent)">Duplicate Detection</strong>.
       </p>
       <div class="stats-bar">
         <div class="stat">
@@ -611,7 +845,11 @@
           <div class="stat-label">Processed</div>
         </div>
         <div class="stat">
-          <div class="stat-val">28</div>
+          <div class="stat-val" id="statDupes">0</div>
+          <div class="stat-label">Duplicates</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val">31</div>
           <div class="stat-label">Fields</div>
         </div>
       </div>
@@ -649,6 +887,23 @@
           <span id="btnText">Extract & Export</span>
         </button>
       </div>
+    </div><!-- /upload-card -->
+
+    <!-- Job Description Panel -->
+    <div class="jd-panel" id="jdPanel">
+      <div class="jd-header" id="jdToggleBtn">
+        <div class="jd-header-left">
+          <span style="font-size:18px">🎯</span>
+          <span class="jd-label">Job Description Match Scoring</span>
+          <span class="jd-badge">Optional</span>
+        </div>
+        <span class="jd-toggle" id="jdToggleIcon">▼</span>
+      </div>
+      <div class="jd-body" id="jdBody">
+        <p class="jd-hint">Paste a job description below and each resume will be scored 0–100 on how well the candidate matches. Scores appear as the first column in your Excel output and in the preview table.</p>
+        <textarea class="jd-textarea" id="jdInput" placeholder="Paste the full job description here…&#10;&#10;e.g. We are looking for a Senior React Developer with 5+ years experience in TypeScript, Node.js, AWS..."></textarea>
+        <div class="jd-char-count"><span id="jdCharCount">0</span> / 2000 chars used</div>
+      </div>
     </div>
 
     <div class="progress-section" id="progressSection">
@@ -669,6 +924,9 @@
         <button class="btn btn-primary" id="downloadBtn">
           ⬇ Download Excel
         </button>
+        <button class="btn btn-secondary" id="previewToggleBtn" style="display:none">
+          👁 Preview Data
+        </button>
         <button class="btn btn-secondary" id="newBatchBtn">
           🔄 New Batch
         </button>
@@ -680,6 +938,23 @@
       <div id="errorItems"></div>
     </div>
 
+    <!-- Live Preview Table -->
+    <div class="preview-section" id="previewSection">
+      <div class="preview-header">
+        <div>
+          <div class="preview-title">📊 Extracted Candidate Data</div>
+          <div class="preview-subtitle" id="previewSubtitle">Showing all candidates</div>
+        </div>
+        <input type="text" class="preview-search" id="previewSearch" placeholder="Search by name, skill, company…" />
+      </div>
+      <div class="table-wrap">
+        <table class="preview-table" id="previewTable">
+          <thead id="previewThead"></thead>
+          <tbody id="previewTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
     <footer>
       <span>ResumeGrid v2.0 — powered by Groq · llama-4-maverick</span>
       <span id="footerStatus"></span>
@@ -689,41 +964,67 @@
   <div class="toast" id="toast"></div>
 
   <script>
-    // Dynamically determine API base URL
     const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
       ? 'http://localhost:5000'
       : window.location.origin;
 
     let files = [];
     let isProcessing = false;
+    let allResults = [];   // stores extracted data for preview table
+    let previewVisible = false;
 
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
-    const fileList = document.getElementById('fileList');
-    const fileItems = document.getElementById('fileItems');
-    const clearBtn = document.getElementById('clearBtn');
-    const extractBtn = document.getElementById('extractBtn');
-    const addMoreBtn = document.getElementById('addMoreBtn');
-    const progressSection = document.getElementById('progressSection');
-    const progressFill = document.getElementById('progressFill');
-    const progressPct = document.getElementById('progressPct');
-    const progressMsg = document.getElementById('progressMsg');
-    const resultCard = document.getElementById('resultCard');
-    const resultTitle = document.getElementById('resultTitle');
+    const dropZone       = document.getElementById('dropZone');
+    const fileInput      = document.getElementById('fileInput');
+    const fileList       = document.getElementById('fileList');
+    const fileItems      = document.getElementById('fileItems');
+    const clearBtn       = document.getElementById('clearBtn');
+    const extractBtn     = document.getElementById('extractBtn');
+    const addMoreBtn     = document.getElementById('addMoreBtn');
+    const progressSection= document.getElementById('progressSection');
+    const progressFill   = document.getElementById('progressFill');
+    const progressPct    = document.getElementById('progressPct');
+    const progressMsg    = document.getElementById('progressMsg');
+    const resultCard     = document.getElementById('resultCard');
+    const resultTitle    = document.getElementById('resultTitle');
     const resultSubtitle = document.getElementById('resultSubtitle');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const newBatchBtn = document.getElementById('newBatchBtn');
-    const errorLog = document.getElementById('errorLog');
-    const errorItems = document.getElementById('errorItems');
-    const statFiles = document.getElementById('statFiles');
-    const statProcessed = document.getElementById('statProcessed');
-    const queueCount = document.getElementById('queueCount');
-    const footerStatus = document.getElementById('footerStatus');
-    const toast = document.getElementById('toast');
-    const btnText = document.getElementById('btnText');
+    const downloadBtn    = document.getElementById('downloadBtn');
+    const newBatchBtn    = document.getElementById('newBatchBtn');
+    const errorLog       = document.getElementById('errorLog');
+    const errorItems     = document.getElementById('errorItems');
+    const statFiles      = document.getElementById('statFiles');
+    const statProcessed  = document.getElementById('statProcessed');
+    const statDupes      = document.getElementById('statDupes');
+    const queueCount     = document.getElementById('queueCount');
+    const footerStatus   = document.getElementById('footerStatus');
+    const toast          = document.getElementById('toast');
+    const btnText        = document.getElementById('btnText');
 
-    // Health check removed — no polling during processing
+    // JD Panel
+    const jdToggleBtn  = document.getElementById('jdToggleBtn');
+    const jdBody       = document.getElementById('jdBody');
+    const jdToggleIcon = document.getElementById('jdToggleIcon');
+    const jdInput      = document.getElementById('jdInput');
+    const jdCharCount  = document.getElementById('jdCharCount');
 
+    // Preview
+    const previewSection    = document.getElementById('previewSection');
+    const previewToggleBtn  = document.getElementById('previewToggleBtn');
+    const previewThead      = document.getElementById('previewThead');
+    const previewTbody      = document.getElementById('previewTbody');
+    const previewSearch     = document.getElementById('previewSearch');
+    const previewSubtitle   = document.getElementById('previewSubtitle');
+
+    // ── JD Panel toggle ──────────────────────────────────────────────────────
+    jdToggleBtn.addEventListener('click', () => {
+      jdBody.classList.toggle('open');
+      jdToggleIcon.classList.toggle('open');
+    });
+
+    jdInput.addEventListener('input', () => {
+      jdCharCount.textContent = jdInput.value.length;
+    });
+
+    // ── Toast ────────────────────────────────────────────────────────────────
     function showToast(msg, type = 'info') {
       toast.textContent = msg;
       toast.className = `toast ${type} show`;
@@ -736,9 +1037,7 @@
       return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
-    function getExt(name) {
-      return name.split('.').pop().toLowerCase();
-    }
+    function getExt(name) { return name.split('.').pop().toLowerCase(); }
 
     function getFileEmoji(name) {
       const ext = getExt(name);
@@ -771,7 +1070,6 @@
         `;
         fileItems.appendChild(item);
       });
-
       fileList.classList.toggle('active', files.length > 0);
       updateStats();
     }
@@ -781,65 +1079,36 @@
       return map[status] || status.toUpperCase();
     }
 
-    function removeFile(idx) {
-      files.splice(idx, 1);
-      renderFiles();
-    }
+    function removeFile(idx) { files.splice(idx, 1); renderFiles(); }
 
     function addFiles(newFiles) {
       const allowed = ['pdf', 'doc', 'docx'];
       let added = 0;
       for (const f of newFiles) {
         const ext = getExt(f.name);
-        if (!allowed.includes(ext)) {
-          showToast(`Skipped ${f.name} — unsupported format`, 'error');
-          continue;
-        }
-        if (files.some(existing => existing.file.name === f.name)) {
-          showToast(`${f.name} already in queue`, 'info');
-          continue;
-        }
+        if (!allowed.includes(ext)) { showToast(`Skipped ${f.name} — unsupported format`, 'error'); continue; }
+        if (files.some(existing => existing.file.name === f.name)) { showToast(`${f.name} already in queue`, 'info'); continue; }
         files.push({ file: f, status: 'pending' });
         added++;
       }
-      if (added > 0) {
-        renderFiles();
-        showToast(`${added} file${added !== 1 ? 's' : ''} added`, 'success');
-      }
+      if (added > 0) { renderFiles(); showToast(`${added} file${added !== 1 ? 's' : ''} added`, 'success'); }
     }
 
-    // Drag & drop
-    dropZone.addEventListener('dragover', e => {
-      e.preventDefault();
-      dropZone.classList.add('drag-over');
-    });
-
+    // ── Drag & drop ──────────────────────────────────────────────────────────
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-
-    dropZone.addEventListener('drop', e => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      addFiles(Array.from(e.dataTransfer.files));
-    });
-
+    dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); addFiles(Array.from(e.dataTransfer.files)); });
     dropZone.addEventListener('click', () => fileInput.click());
-
-    fileInput.addEventListener('change', () => {
-      addFiles(Array.from(fileInput.files));
-      fileInput.value = '';
-    });
-
-    clearBtn.addEventListener('click', () => {
-      files = [];
-      renderFiles();
-      hideResults();
-    });
-
+    fileInput.addEventListener('change', () => { addFiles(Array.from(fileInput.files)); fileInput.value = ''; });
+    clearBtn.addEventListener('click', () => { files = []; renderFiles(); hideResults(); });
     addMoreBtn.addEventListener('click', () => fileInput.click());
 
     function hideResults() {
       resultCard.classList.remove('active');
       errorLog.classList.remove('active');
+      previewSection.classList.remove('active');
+      previewToggleBtn.style.display = 'none';
+      previewVisible = false;
     }
 
     function setProgress(pct, msg) {
@@ -848,6 +1117,105 @@
       progressMsg.textContent = msg;
     }
 
+    // ── Preview Table ────────────────────────────────────────────────────────
+    const PREVIEW_COLS = [
+      { key: 'match_score',        label: 'Score' },
+      { key: 'full_name',          label: 'Name' },
+      { key: 'current_title',      label: 'Title' },
+      { key: 'years_of_experience',label: 'Exp' },
+      { key: 'email',              label: 'Email' },
+      { key: 'phone',              label: 'Phone' },
+      { key: 'location',           label: 'Location' },
+      { key: 'skills',             label: 'Skills' },
+      { key: 'most_recent_company',label: 'Last Company' },
+      { key: 'education_degree',   label: 'Degree' },
+      { key: 'last_ctc',           label: 'CTC' },
+      { key: 'current_status',     label: 'Status' },
+      { key: 'duplicate_of',       label: 'Duplicate' },
+    ];
+
+    let sortCol = null, sortAsc = true;
+
+    function renderPreviewTable(data) {
+      // Determine which columns have at least one value
+      const activeCols = PREVIEW_COLS.filter(c => data.some(r => r[c.key]));
+
+      // Build header
+      previewThead.innerHTML = '';
+      const tr = document.createElement('tr');
+      activeCols.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c.label + (sortCol === c.key ? (sortAsc ? ' ▲' : ' ▼') : '');
+        th.addEventListener('click', () => {
+          if (sortCol === c.key) sortAsc = !sortAsc; else { sortCol = c.key; sortAsc = true; }
+          renderPreviewTable(allResults);
+        });
+        tr.appendChild(th);
+      });
+      previewThead.appendChild(tr);
+
+      // Sort
+      let sorted = [...data];
+      if (sortCol) {
+        sorted.sort((a, b) => {
+          let va = a[sortCol] || '', vb = b[sortCol] || '';
+          if (sortCol === 'match_score') { va = parseInt(va) || 0; vb = parseInt(vb) || 0; }
+          if (va < vb) return sortAsc ? -1 : 1;
+          if (va > vb) return sortAsc ? 1 : -1;
+          return 0;
+        });
+      }
+
+      // Apply search filter
+      const q = previewSearch.value.toLowerCase();
+      if (q) sorted = sorted.filter(r => Object.values(r).join(' ').toLowerCase().includes(q));
+
+      previewTbody.innerHTML = '';
+      if (sorted.length === 0) {
+        previewTbody.innerHTML = `<tr><td colspan="${activeCols.length}" class="preview-empty">No candidates match your search.</td></tr>`;
+        previewSubtitle.textContent = 'No results';
+        return;
+      }
+
+      const dupeCount = sorted.filter(r => r.duplicate_of).length;
+      previewSubtitle.textContent = `${sorted.length} candidate${sorted.length !== 1 ? 's' : ''}${dupeCount ? ` · ${dupeCount} duplicate${dupeCount !== 1 ? 's' : ''} flagged` : ''}`;
+
+      sorted.forEach(row => {
+        const tr = document.createElement('tr');
+        activeCols.forEach(c => {
+          const td = document.createElement('td');
+          const val = row[c.key] || '';
+
+          if (c.key === 'match_score' && val) {
+            const score = parseInt(val);
+            const cls = score >= 75 ? 'score-high' : score >= 50 ? 'score-mid' : 'score-low';
+            td.innerHTML = `<span class="score-chip ${cls}">${score}/100</span>`;
+          } else if (c.key === 'duplicate_of' && val) {
+            td.innerHTML = `<span class="dup-chip">⚠ DUP</span><div style="font-size:10px;color:var(--muted);margin-top:3px">${val}</div>`;
+          } else if (c.key === 'email' && val) {
+            td.innerHTML = `<a href="mailto:${val}" class="link-cell">${val}</a>`;
+          } else if (c.key === 'current_status' && val) {
+            const colors = { 'Employed': 'var(--green)', 'Not Employed': 'var(--yellow)', 'Fresher': 'var(--accent)' };
+            td.innerHTML = `<span style="color:${colors[val] || 'var(--text)'}; font-weight:600; font-size:11px">${val}</span>`;
+          } else {
+            td.innerHTML = `<div class="cell-text" title="${val.replace(/"/g,'&quot;')}">${val || '<span style="color:var(--muted)">—</span>'}</div>`;
+          }
+          tr.appendChild(td);
+        });
+        previewTbody.appendChild(tr);
+      });
+    }
+
+    previewSearch.addEventListener('input', () => renderPreviewTable(allResults));
+
+    previewToggleBtn.addEventListener('click', () => {
+      previewVisible = !previewVisible;
+      previewSection.classList.toggle('active', previewVisible);
+      previewToggleBtn.textContent = previewVisible ? '🙈 Hide Preview' : '👁 Preview Data';
+      if (previewVisible) previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    // ── Extract ──────────────────────────────────────────────────────────────
     extractBtn.addEventListener('click', async () => {
       if (files.length === 0 || isProcessing) return;
 
@@ -856,27 +1224,26 @@
       btnText.innerHTML = '<span class="spinner"></span> Processing...';
       progressSection.classList.add('active');
       hideResults();
+      allResults = [];
 
-      setProgress(5, 'Uploading files to server...');
+      const jd = jdInput.value.trim();
+      setProgress(5, jd ? 'Uploading files (scoring enabled)...' : 'Uploading files to server...');
 
       files.forEach(f => f.status = 'processing');
       renderFiles();
 
       const formData = new FormData();
       files.forEach(f => formData.append('files', f.file));
+      if (jd) formData.append('job_description', jd);
 
       try {
-        const response = await fetch(`${API_BASE}/extract`, {
-          method: 'POST',
-          body: formData
-        });
+        const response = await fetch(`${API_BASE}/extract`, { method: 'POST', body: formData });
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({ error: 'Server error' }));
           throw new Error(err.error || `HTTP ${response.status}`);
         }
 
-        // Read SSE stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -887,7 +1254,7 @@
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n\n');
-          buffer = lines.pop(); // keep incomplete chunk
+          buffer = lines.pop();
 
           for (const chunk of lines) {
             const line = chunk.trim();
@@ -896,53 +1263,61 @@
             try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
 
             if (event.type === 'start') {
-              setProgress(5, `Processing ${event.total} resume${event.total !== 1 ? 's' : ''} concurrently...`);
+              setProgress(5, `Processing ${event.total} resume${event.total !== 1 ? 's' : ''}${jd ? ' + scoring' : ''}...`);
 
             } else if (event.type === 'progress') {
-              // Update individual file status
               const idx = files.findIndex(f => f.file.name === event.filename);
               if (idx !== -1) {
                 files[idx].status = event.ok ? 'success' : 'error';
                 const itemEl = document.getElementById(`file-item-${idx}`);
                 const statusEl = document.getElementById(`status-${idx}`);
                 if (itemEl) itemEl.className = `file-item ${files[idx].status}`;
-                if (statusEl) {
-                  statusEl.className = `file-status ${files[idx].status}`;
-                  statusEl.textContent = event.ok ? 'DONE' : 'FAILED';
-                }
+                if (statusEl) { statusEl.className = `file-status ${files[idx].status}`; statusEl.textContent = event.ok ? 'DONE' : 'FAILED'; }
+              }
+              // Accumulate data for preview
+              if (event.ok && event.data) {
+                allResults.push(event.data);
+                // Update duplicate counter
+                const dupes = allResults.filter(r => r.duplicate_of).length;
+                statDupes.textContent = dupes;
               }
               const remaining = event.total - event.completed;
-              setProgress(event.pct, remaining > 0
-                ? `Extracting... ${event.completed}/${event.total} done`
-                : 'Generating Excel...'
-              );
+              setProgress(event.pct, remaining > 0 ? `Extracting... ${event.completed}/${event.total} done` : 'Generating Excel...');
               statProcessed.textContent = files.filter(f => f.status === 'success').length;
 
             } else if (event.type === 'done') {
               if (!event.success) {
-                const allRateLimit = event.errors?.length > 0 &&
-                  event.errors.every(e => e.error && e.error.includes('rate_limit_exceeded'));
-                if (allRateLimit) {
-                  throw new Error("Groq daily token limit (100k) exhausted. Wait until midnight UTC for the quota to reset, or upgrade your Groq plan at console.groq.com/settings/billing.");
-                }
+                const allRateLimit = event.errors?.length > 0 && event.errors.every(e => e.error && e.error.includes('rate_limit_exceeded'));
+                if (allRateLimit) throw new Error("Groq daily token limit (100k) exhausted. Wait until midnight UTC or upgrade your Groq plan.");
                 throw new Error(event.error || 'Extraction failed');
               }
 
+              // Use the full results array from done event if available
+              if (event.results && event.results.length > 0) allResults = event.results;
+
               setProgress(100, 'Complete!');
               statProcessed.textContent = event.processed;
+              const dupeCount = allResults.filter(r => r.duplicate_of).length;
+              statDupes.textContent = dupeCount;
 
               resultTitle.textContent = `Extracted ${event.processed} candidate${event.processed !== 1 ? 's' : ''}`;
-              resultSubtitle.textContent = `Excel file ready — ${event.processed} row${event.processed !== 1 ? 's' : ''} of structured data (including Last CTC & Status)`;
+              const scoringNote = jd ? ' · Match scoring included' : '';
+              const dupeNote = dupeCount ? ` · ${dupeCount} duplicate${dupeCount !== 1 ? 's' : ''} flagged` : '';
+              resultSubtitle.textContent = `Excel ready — ${event.processed} row${event.processed !== 1 ? 's' : ''}${scoringNote}${dupeNote}`;
               resultCard.classList.add('active');
 
+              // Show preview button & render table
+              if (allResults.length > 0) {
+                previewToggleBtn.style.display = '';
+                renderPreviewTable(allResults);
+              }
+
               if (event.errors && event.errors.length > 0) {
-                errorItems.innerHTML = event.errors.map(e =>
-                  `<div class="error-item"><strong>${e.file}</strong>: ${e.error}</div>`
-                ).join('');
+                errorItems.innerHTML = event.errors.map(e => `<div class="error-item"><strong>${e.file}</strong>: ${e.error}</div>`).join('');
                 errorLog.classList.add('active');
               }
 
-              showToast(`Done! ${event.processed} resumes extracted`, 'success');
+              showToast(`Done! ${event.processed} resumes extracted${dupeCount ? `, ${dupeCount} duplicate${dupeCount !== 1 ? 's' : ''} flagged` : ''}`, 'success');
             }
           }
         }
@@ -952,12 +1327,9 @@
         renderFiles();
         setProgress(0, 'Failed');
         progressSection.classList.remove('active');
-
         errorItems.innerHTML = `<div class="error-item"><strong>Error:</strong> ${err.message}</div>`;
         errorLog.classList.add('active');
-
         showToast('Extraction failed — check backend', 'error');
-
       } finally {
         isProcessing = false;
         btnText.textContent = 'Extract & Export';
@@ -966,13 +1338,14 @@
       }
     });
 
-    downloadBtn.addEventListener('click', () => {
-      window.open(`${API_BASE}/download`, '_blank');
-    });
+    downloadBtn.addEventListener('click', () => { window.open(`${API_BASE}/download`, '_blank'); });
 
     newBatchBtn.addEventListener('click', () => {
       files = [];
+      allResults = [];
       statProcessed.textContent = '0';
+      statDupes.textContent = '0';
+      sortCol = null; sortAsc = true;
       renderFiles();
       hideResults();
       progressSection.classList.remove('active');
