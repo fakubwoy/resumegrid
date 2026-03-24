@@ -2,6 +2,10 @@
  * ResumeGrid — WhatsApp Service (Internal)
  * Runs as background process inside the same Railway container as Flask.
  * Flask proxies /wa/* requests here via WA_SERVICE_URL=http://localhost:3001
+ *
+ * COST OPTIMISATION: Chromium is launched on-demand (/connect) and destroyed
+ * after IDLE_TIMEOUT_MS of inactivity. This eliminates the ~1.4 GB idle RAM
+ * footprint that dominated Railway costs when the container ran 24/7.
  */
 
 'use strict';
@@ -14,6 +18,9 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const app  = express();
 const PORT = parseInt(process.env.WA_PORT || '3001', 10);
 
+// Destroy Chromium after this many ms of no send activity (default: 15 min)
+const IDLE_TIMEOUT_MS = parseInt(process.env.WA_IDLE_TIMEOUT_MS || String(15 * 60 * 1000), 10);
+
 app.use(cors());
 app.use(express.json());
 
@@ -21,6 +28,30 @@ let waStatus       = 'disconnected';
 let waClient       = null;
 let qrDataUrl      = null;
 let connectedPhone = null;
+let idleTimer      = null;
+
+// ── Idle timer ──────────────────────────────────────────────────────────────
+// Reset on every successful send. If no send happens within IDLE_TIMEOUT_MS
+// after the last one (or after connection), Chromium is destroyed to reclaim RAM.
+// The user simply clicks "Connect WhatsApp" again to restart.
+
+function resetIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(destroyClient, IDLE_TIMEOUT_MS);
+}
+
+async function destroyClient() {
+  if (!waClient) return;
+  console.log('[WA] Idle timeout reached — destroying Chromium to free RAM');
+  const c = waClient;
+  waClient       = null;
+  waStatus       = 'disconnected';
+  qrDataUrl      = null;
+  connectedPhone = null;
+  try { await c.destroy(); } catch (_) {}
+}
+
+// ── Client factory ──────────────────────────────────────────────────────────
 
 function createClient() {
   waStatus       = 'initializing';
@@ -28,7 +59,7 @@ function createClient() {
   connectedPhone = null;
 
   const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
+    authStrategy: new LocalAuth({ dataPath: '/tmp/.wwebjs_auth' }),
     puppeteer: {
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       headless: true,
@@ -48,7 +79,8 @@ function createClient() {
         '--no-first-run',
         '--no-zygote',
         '--safebrowsing-disable-auto-update',
-        '--single-process',
+        '--disable-background-timer-throttling',
+        '--js-flags=--max-old-space-size=192',
       ],
     },
   });
@@ -70,33 +102,41 @@ function createClient() {
     waStatus       = 'ready';
     connectedPhone = client.info?.wid?.user || null;
     console.log('[WA] Ready — phone:', connectedPhone);
+    resetIdleTimer();
   });
 
   client.on('auth_failure', (msg) => {
     console.error('[WA] Auth failure:', msg);
     waStatus = 'auth_failure';
     waClient = null;
+    clearTimeout(idleTimer);
   });
 
   client.on('disconnected', (reason) => {
     console.warn('[WA] Disconnected:', reason);
-    waStatus = 'disconnected';
-    waClient = null;
-    qrDataUrl = null;
+    waStatus       = 'disconnected';
+    waClient       = null;
+    qrDataUrl      = null;
     connectedPhone = null;
+    clearTimeout(idleTimer);
   });
 
   client.initialize().catch((err) => {
     console.error('[WA] Init error:', err.message);
     waStatus = 'error';
     waClient = null;
+    clearTimeout(idleTimer);
   });
 
   return client;
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
 function normalizePhone(raw) { return String(raw || '').replace(/\D/g, ''); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Routes ───────────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => res.json({ ok: true, waStatus }));
 
@@ -108,11 +148,13 @@ app.post('/connect', (_req, res) => {
   if (waClient && busy.includes(waStatus))
     return res.json({ ok: true, status: waStatus, message: 'Already connecting' });
   if (waClient) { try { waClient.destroy(); } catch (_) {} waClient = null; }
+  clearTimeout(idleTimer);
   waClient = createClient();
   res.json({ ok: true, status: waStatus, message: 'Initialization started' });
 });
 
 app.post('/disconnect', async (_req, res) => {
+  clearTimeout(idleTimer);
   if (!waClient) return res.json({ ok: true, message: 'Not connected' });
   try { await waClient.logout(); } catch (_) {}
   try { await waClient.destroy(); } catch (_) {}
@@ -132,6 +174,7 @@ app.post('/send', async (req, res) => {
     if (!await waClient.isRegisteredUser(chatId))
       return res.status(404).json({ ok: false, error: 'Not on WhatsApp' });
     await waClient.sendMessage(chatId, message);
+    resetIdleTimer();
     res.json({ ok: true, to: num });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -157,6 +200,7 @@ app.post('/send-bulk', async (req, res) => {
         await waClient.sendMessage(chatId, item.message);
         results.push({ phone: num, name: item.name, ok: true });
         console.log(`[WA] Sent → ${num} (${item.name || ''})`);
+        resetIdleTimer();
       }
     } catch (err) {
       results.push({ phone: num, name: item.name, ok: false, error: err.message });
@@ -167,5 +211,7 @@ app.post('/send-bulk', async (req, res) => {
   res.json({ ok: true, sent, failed: results.length - sent, results });
 });
 
+// ── Start ────────────────────────────────────────────────────────────────────
+
 app.listen(PORT, '0.0.0.0', () =>
-  console.log(`[WA Service] http://0.0.0.0:${PORT}`));
+  console.log(`[WA Service] http://0.0.0.0:${PORT} — Chromium starts on demand (idle timeout: ${IDLE_TIMEOUT_MS / 1000}s)`));
