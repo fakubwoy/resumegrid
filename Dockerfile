@@ -54,7 +54,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Node WhatsApp service ─────────────────────────────────────────
 COPY whatsapp-service/package.json ./whatsapp-service/
-RUN cd whatsapp-service && npm ci --omit=dev \
+RUN cd whatsapp-service && npm install --omit=dev \
     && npm cache clean --force
 
 COPY whatsapp-service/server.js ./whatsapp-service/
