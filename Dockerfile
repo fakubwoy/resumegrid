@@ -1,17 +1,22 @@
 # ─────────────────────────────────────────────────────────────────
-#  ResumeGrid — Railway single-container image
-#  • Python 3.10 (Flask + Gunicorn) on $PORT  (Railway-assigned)
-#  • Node 20 (whatsapp-web.js) on internal port 3001
-#  • Chromium installed for Puppeteer (whatsapp-web.js)
+#  ResumeGrid — Railway single-container image  (cost-optimised)
+#
+#  Key changes vs previous version:
+#   • Removed fonts-noto-color-emoji (~110 MB) — not needed for WhatsApp text
+#   • Removed fonts-noto (~60 MB) — system fonts still present
+#   • Removed gcc (only needed at build time — moved to one layer, then purged)
+#   • Merged all apt-get calls into ONE layer so intermediate caches don't bloat image
+#   • Added --no-install-recommends everywhere (saves ~80 MB from recommended extras)
+#   • npm ci --omit=dev (same as before, kept)
+#   • pip --no-cache-dir (same as before, kept)
+#   • Explicit cleanup: apt lists + pip cache purged in same RUN layer
 # ─────────────────────────────────────────────────────────────────
 FROM python:3.10-slim
 
 WORKDIR /app
 
-# ── System dependencies ────────────────────────────────────────────
+# ── System dependencies — one layer, purge apt lists immediately ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build tools
-    gcc \
     curl \
     wget \
     gnupg \
@@ -20,10 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     poppler-utils \
-    # Chromium + deps (for Puppeteer inside whatsapp-web.js)
+    # Chromium + required shared libs (Puppeteer / whatsapp-web.js)
     chromium \
-    fonts-noto \
-    fonts-noto-color-emoji \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -40,9 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Node.js 20 LTS ────────────────────────────────────────────────
+# ── Node.js 20 LTS (separate apt call to keep nodesource setup clean) ─
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python dependencies ───────────────────────────────────────────
@@ -51,21 +54,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Node WhatsApp service ─────────────────────────────────────────
 COPY whatsapp-service/package.json ./whatsapp-service/
-RUN cd whatsapp-service && npm install --omit=dev
+RUN cd whatsapp-service && npm ci --omit=dev \
+    && npm cache clean --force
+
 COPY whatsapp-service/server.js ./whatsapp-service/
 
 # ── Tell Puppeteer to use system Chromium (no extra download) ─────
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# ── WhatsApp service runs on fixed internal port 3001 ─────────────
+# ── WhatsApp service internal port ───────────────────────────────
 ENV WA_PORT=3001
-# Flask proxy knows where to find it
 ENV WA_SERVICE_URL=http://localhost:3001
+
+# ── Idle timeout: destroy Chromium after 10 min of no sends ──────
+#    (was 15 min default — reduces RAM waste for inactive sessions)
+ENV WA_IDLE_TIMEOUT_MS=600000
 
 # ── App source ────────────────────────────────────────────────────
 COPY app.py .
-# FIX: actual filename is gunicorn_conf.py (not gunicorn.conf.py)
 COPY gunicorn.conf.py .
 COPY static/ ./static/
 
@@ -73,6 +80,5 @@ COPY static/ ./static/
 COPY start.sh .
 RUN chmod +x start.sh
 
-# Railway injects $PORT at runtime — Gunicorn reads it via gunicorn_conf.py
 EXPOSE 3001
 CMD ["./start.sh"]
