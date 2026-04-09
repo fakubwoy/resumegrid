@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 import json
 import re
+import subprocess
 import tempfile
 import time
 import logging
@@ -1117,14 +1118,90 @@ def download():
     )
 
 
-# ── WhatsApp proxy routes ─────────────────────────────────────────────────────
+# ── WhatsApp proxy routes (lazy Node process management) ──────────────────────
+#
+#  The Node/Chromium service is NOT started at container boot.
+#  It is spawned on-demand when the user calls /wa/connect and is
+#  destroyed automatically by server.js after WA_IDLE_TIMEOUT_MS of
+#  inactivity (default 10 min).  Flask only manages the Node *process*
+#  lifetime here — Chromium lifecycle is still owned by server.js.
 
 import urllib.request as _urllib_req
 
 WA_SERVICE_URL = os.environ.get("WA_SERVICE_URL", "http://localhost:3001")
+WA_PORT        = int(os.environ.get("WA_PORT", "3001"))
+
+_wa_proc: subprocess.Popen | None = None   # the running Node process (or None)
+
+
+def _wa_process_alive() -> bool:
+    """Return True if our Node process is still running."""
+    return _wa_proc is not None and _wa_proc.poll() is None
+
+
+def _spawn_wa_service():
+    """
+    Start the Node WhatsApp service in the background (non-blocking).
+    Does nothing if the process is already running.
+    Returns (ok: bool, message: str).
+    """
+    global _wa_proc
+
+    if _wa_process_alive():
+        logger.debug("[WA] spawn requested but process already running (PID %d)", _wa_proc.pid)
+        return True, "already running"
+
+    node_script = "/app/whatsapp-service/server.js"
+    if not os.path.exists(node_script):
+        # Local dev fallback
+        node_script = os.path.join(os.path.dirname(__file__), "whatsapp-service", "server.js")
+
+    if not os.path.exists(node_script):
+        return False, f"server.js not found at {node_script}"
+
+    try:
+        _wa_proc = subprocess.Popen(
+            [
+                "node",
+                "--max-old-space-size=192",
+                "--expose-gc",
+                "--gc-interval=100",
+                node_script,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info("[WA] Node service spawned (PID %d)", _wa_proc.pid)
+    except FileNotFoundError:
+        return False, "node binary not found — is Node.js installed?"
+    except Exception as exc:
+        return False, str(exc)
+
+    # Wait up to 10 s for the HTTP server to be reachable
+    health_url = f"http://localhost:{WA_PORT}/health"
+    for attempt in range(10):
+        time.sleep(1)
+        if not _wa_process_alive():
+            return False, "Node process exited immediately after spawn"
+        try:
+            with _urllib_req.urlopen(health_url, timeout=2) as r:
+                if r.status == 200:
+                    logger.info("[WA] Service healthy after %ds", attempt + 1)
+                    return True, "started"
+        except Exception:
+            pass
+
+    # Process is alive but HTTP isn't answering — still return ok so
+    # whatsapp-web.js can continue initialising (QR gen takes a moment)
+    if _wa_process_alive():
+        logger.warning("[WA] HTTP not ready yet but process is alive — continuing")
+        return True, "starting"
+
+    return False, "Node service failed to become healthy in time"
 
 
 def _wa_request(method, path, body=None):
+    """Simple wrapper to call the Node WhatsApp service."""
     url = f"{WA_SERVICE_URL}{path}"
     data = json.dumps(body).encode() if body else None
     headers = {"Content-Type": "application/json"}
@@ -1133,31 +1210,52 @@ def _wa_request(method, path, body=None):
         with _urllib_req.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read()), resp.status
     except _urllib_req.HTTPError as e:
-        return json.loads(e.read()), e.code
+        try:
+            return json.loads(e.read()), e.code
+        except Exception:
+            return {"ok": False, "error": str(e)}, e.code
     except Exception as exc:
         return {"ok": False, "error": str(exc)}, 503
 
 
 @app.route("/wa/status")
 def wa_status():
+    # If the Node process isn't running, report disconnected without trying to contact it
+    if not _wa_process_alive():
+        return jsonify({"status": "disconnected", "qr": None, "phone": None}), 200
     data, code = _wa_request("GET", "/status")
     return jsonify(data), code
 
 
 @app.route("/wa/connect", methods=["POST"])
 def wa_connect():
+    """
+    Lazily spawns the Node service the first time the user wants to connect.
+    Subsequent calls while the process is alive are forwarded straight through.
+    """
+    if not _wa_process_alive():
+        ok, msg = _spawn_wa_service()
+        if not ok:
+            logger.error("[WA] Failed to spawn Node service: %s", msg)
+            return jsonify({"ok": False, "error": f"Could not start WhatsApp service: {msg}"}), 500
+        logger.info("[WA] Node service ready — forwarding /connect: %s", msg)
+
     data, code = _wa_request("POST", "/connect")
     return jsonify(data), code
 
 
 @app.route("/wa/disconnect", methods=["POST"])
 def wa_disconnect():
+    if not _wa_process_alive():
+        return jsonify({"ok": True, "message": "Not running"}), 200
     data, code = _wa_request("POST", "/disconnect")
     return jsonify(data), code
 
 
 @app.route("/wa/send", methods=["POST"])
 def wa_send():
+    if not _wa_process_alive():
+        return jsonify({"ok": False, "error": "WhatsApp service not running. Connect first."}), 503
     body = request.get_json(silent=True) or {}
     data, code = _wa_request("POST", "/send", body)
     return jsonify(data), code
@@ -1165,6 +1263,8 @@ def wa_send():
 
 @app.route("/wa/send-bulk", methods=["POST"])
 def wa_send_bulk():
+    if not _wa_process_alive():
+        return jsonify({"ok": False, "error": "WhatsApp service not running. Connect first."}), 503
     body = request.get_json(silent=True) or {}
     data, code = _wa_request("POST", "/send-bulk", body)
     return jsonify(data), code
