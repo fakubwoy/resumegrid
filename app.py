@@ -10,10 +10,13 @@ import base64
 import pdfplumber
 import pypdf
 import docx2txt
+import httpx
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # OCR imports — optional, gracefully degraded if unavailable
 try:
@@ -34,68 +37,64 @@ logging.basicConfig(
 )
 logger = logging.getLogger("resumegrid")
 
-# Quieten noisy third-party loggers
 logging.getLogger("pdfplumber").setLevel(logging.WARNING)
 logging.getLogger("pdfminer").setLevel(logging.WARNING)
 logging.getLogger("pypdf").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
+logger.info("ResumeGrid (Ollama-local) starting up (log level: %s)", LOG_LEVEL)
 if OCR_AVAILABLE:
     logger.info("OCR support enabled (pdf2image + pytesseract)")
 else:
-    logger.warning("OCR support NOT available — image-based PDFs will fail silently. "
-                   "Install pdf2image and pytesseract to enable OCR.")
+    logger.warning("OCR support NOT available — install pdf2image + pytesseract to enable.")
 
-# ── AI client setup ────────────────────────────────────────────────────────────
-GROQ_API_KEY   = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# ── Ollama configuration ────────────────────────────────────────────────────────
+# 
+# Recommended model for your hardware (Nvidia Quadro GPU, Xeon CPU, 32 GB RAM):
+#   mistral-nemo:12b  — Best balance of speed + accuracy for structured extraction.
+#                        Fits easily in VRAM, fast inference, strong JSON compliance.
+#   Pull with: ollama pull mistral-nemo
+#
+# Fallback (if mistral-nemo unavailable):
+#   llama3.1:8b       — Great accuracy, very fast on GPU
+#   Pull with: ollama pull llama3.1
+#
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "mistral-nemo")
 
-groq_client = None
-if GROQ_API_KEY:
+# Concurrency: how many resumes to process in parallel.
+# With a Quadro GPU, Ollama handles one request at a time anyway (GPU-locked),
+# but we can queue up text-extraction concurrently and send AI calls sequentially.
+# The AI calls are serialised via a semaphore to avoid overloading Ollama.
+MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "4"))  # text extraction threads
+OLLAMA_SEMAPHORE = threading.Semaphore(1)   # one AI call at a time (GPU constraint)
+
+logger.info("Ollama endpoint: %s  model: %s", OLLAMA_BASE_URL, OLLAMA_MODEL)
+logger.info("Concurrent text-extraction workers: %d", MAX_CONCURRENT_EXTRACT)
+
+
+def check_ollama():
+    """Verify Ollama is running and the chosen model is available."""
     try:
-        from groq import Groq
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        logger.info("Groq client initialised (model: %s)", "llama-3.3-70b-versatile")
+        resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        if resp.status_code == 200:
+            models = [m["name"] for m in resp.json().get("models", [])]
+            logger.info("Ollama available. Models pulled: %s", models)
+            # Check if our model (or a variant) is present
+            model_base = OLLAMA_MODEL.split(":")[0]
+            if any(model_base in m for m in models):
+                logger.info("Model '%s' found ✓", OLLAMA_MODEL)
+            else:
+                logger.warning(
+                    "Model '%s' NOT found in Ollama. "
+                    "Run: ollama pull %s", OLLAMA_MODEL, OLLAMA_MODEL
+                )
     except Exception as e:
-        logger.error("Failed to initialise Groq client: %s", e)
-        groq_client = None
-else:
-    logger.warning("GROQ_API_KEY not set — Groq provider disabled")
-
-gemini_model = None
-if GEMINI_API_KEY:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-        logger.info("Gemini client initialised (model: gemini-2.5-flash)")
-    except Exception as e:
-        logger.error("Failed to initialise Gemini client: %s", e)
-        gemini_model = None
-else:
-    logger.warning("GEMINI_API_KEY not set — Gemini provider disabled")
-
-GROQ_MODEL = "llama-3.3-70b-versatile"
-
-# Round-robin provider state
-_provider_index = 0  # 0 = Groq, 1 = Gemini
+        logger.warning("Could not reach Ollama at %s: %s", OLLAMA_BASE_URL, e)
 
 
-def _next_provider():
-    """Return ('groq'|'gemini') cycling between available providers."""
-    global _provider_index
-    providers = []
-    if groq_client:
-        providers.append("groq")
-    if gemini_model:
-        providers.append("gemini")
-    if not providers:
-        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
-    provider = providers[_provider_index % len(providers)]
-    _provider_index += 1
-    return provider
+check_ollama()
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -192,39 +191,21 @@ def extract_hyperlinks_from_pdf(tmp_path):
 
 
 def is_image_based_pdf(text, page_count):
-    """
-    Detect PDFs where text extraction failed or produced garbage.
-    Two signals:
-      1. Very low character yield  — fewer than 300 chars per page on average.
-      2. High (cid:N) garbling ratio — >10% of word tokens are encoding artifacts,
-         which indicates a font that couldn't be decoded (common in scanned/image PDFs).
-    Either signal alone is sufficient to trigger OCR.
-    """
     stripped = text.strip() if text else ""
-
-    # Signal 1: low yield
     if len(stripped) < page_count * 300:
         return True
-
-    # Signal 2: garbled font encoding
     import re as _re
     cid_hits = len(_re.findall(r'\(cid:\d+\)', stripped))
     word_count = len(stripped.split())
     if word_count > 0 and cid_hits / word_count > 0.10:
         return True
-
     return False
 
 
 def ocr_pdf(tmp_path, filename):
-    """
-    Render each PDF page to an image and run Tesseract OCR.
-    Returns the combined OCR text, or raises if OCR is unavailable.
-    """
     if not OCR_AVAILABLE:
         raise RuntimeError(
-            "OCR is not available. Install pdf2image and pytesseract "
-            "to process image-based PDFs."
+            "OCR is not available. Install pdf2image and pytesseract to process image-based PDFs."
         )
     logger.info("'%s' — running OCR (image-based PDF detected)", filename)
     t0 = time.monotonic()
@@ -234,13 +215,9 @@ def ocr_pdf(tmp_path, filename):
         page_text = pytesseract.image_to_string(page_img, lang="eng")
         if page_text.strip():
             parts.append(page_text)
-        logger.debug("'%s' — OCR page %d/%d: %d chars", filename, i + 1, len(pages), len(page_text))
     text = "\n".join(parts)
     elapsed = time.monotonic() - t0
-    logger.info(
-        "'%s' — OCR complete in %.2fs: %d pages → %d chars",
-        filename, elapsed, len(pages), len(text)
-    )
+    logger.info("'%s' — OCR complete in %.2fs: %d pages → %d chars", filename, elapsed, len(pages), len(text))
     return text
 
 
@@ -278,34 +255,14 @@ def extract_text_from_file(file_content, filename):
             text = "\n".join(parts)
             urls = extract_hyperlinks_from_pdf(tmp_path)
             url_overrides = classify_urls(urls)
-            logger.debug(
-                "'%s' — PDF extracted: %d pages, %d chars, %d hyperlinks found",
-                filename, num_pages, len(text), len(urls)
-            )
 
-            # Fallback to OCR if the PDF appears to be image-based
             if is_image_based_pdf(text, num_pages):
-                logger.info(
-                    "'%s' — low text yield (%d chars across %d pages), "
-                    "treating as image-based PDF and attempting OCR",
-                    filename, len(text.strip()), num_pages
-                )
                 try:
                     ocr_text = ocr_pdf(tmp_path, filename)
                     if len(ocr_text.strip()) > len(text.strip()):
-                        logger.info(
-                            "'%s' — OCR improved text yield: %d → %d chars",
-                            filename, len(text.strip()), len(ocr_text.strip())
-                        )
                         text = ocr_text
-                    else:
-                        logger.warning(
-                            "'%s' — OCR did not improve yield (%d chars), keeping original",
-                            filename, len(ocr_text.strip())
-                        )
                 except Exception as ocr_err:
                     logger.error("'%s' — OCR failed: %s", filename, ocr_err)
-                    # Continue with whatever pdfplumber managed to extract
 
             return text, url_overrides
         finally:
@@ -321,10 +278,6 @@ def extract_text_from_file(file_content, filename):
         try:
             text = docx2txt.process(tmp_path)
             url_overrides = extract_hyperlinks_from_docx(tmp_path)
-            logger.debug(
-                "'%s' — DOCX extracted: %d chars, %d hyperlinks found",
-                filename, len(text) if text else 0, len(url_overrides)
-            )
             return text, url_overrides
         finally:
             try:
@@ -363,7 +316,7 @@ Include these fields (use null if not found):
 - education_degree, education_institution, education_year, education_gpa
 - companies_worked (comma-separated list), most_recent_company, most_recent_role, most_recent_duration, total_companies
 - certifications, languages_spoken, projects, achievements
-- last_ctc (last/current CTC or salary - if not explicitly mentioned, leave as null)
+- last_ctc (last/current CTC or salary — if not explicitly mentioned, leave as null)
 - current_status ("Employed" if currently working, "Not Employed" if between jobs, "Fresher" if no work experience)
 
 For current_status:
@@ -371,7 +324,7 @@ For current_status:
 - If most recent job ended in past or mentions "seeking" -> "Not Employed"
 - If no work experience or only internships/projects -> "Fresher"
 
-Return ONLY valid JSON with no explanation or markdown."""
+IMPORTANT: Return ONLY a valid JSON object. No markdown, no backticks, no explanation, no preamble."""
 
 
 def get_scoring_prompt(job_description):
@@ -387,18 +340,76 @@ Score the candidate from 0 to 100 based on:
 - Education & certifications (10 points)
 - Overall fit (10 points)
 
-Return ONLY a JSON object with exactly these fields:
+Return ONLY a JSON object with exactly these two fields:
 {{
   "match_score": <integer 0-100>,
-  "match_reason": "<one sentence summary of why they fit or don't fit>"
+  "match_reason": "<one sentence summary of fit>"
 }}
 
 No markdown, no explanation, just the JSON."""
 
 
-def score_resume_against_jd(resume_data, job_description, provider_used_hint=None):
-    """Score a single already-extracted resume dict against a JD. Returns (score_int, reason_str)."""
-    # Build a compact resume summary from extracted fields for the scoring call
+# ── Ollama call ────────────────────────────────────────────────────────────────
+
+def call_ollama(prompt_text, system_prompt=None, max_retries=3):
+    """
+    Call the local Ollama API. Uses the semaphore to serialise GPU calls.
+    Retries on connection errors (e.g. Ollama temporarily busy).
+    """
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": 0.0,       # deterministic for extraction
+            "num_predict": 2048,
+            "top_p": 1.0,
+        }
+    }
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            with OLLAMA_SEMAPHORE:  # one GPU call at a time
+                t0 = time.monotonic()
+                resp = httpx.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=120.0
+                )
+                resp.raise_for_status()
+                elapsed = time.monotonic() - t0
+                result = resp.json()
+                text = result["message"]["content"].strip()
+                logger.debug("Ollama response in %.2fs (%d chars)", elapsed, len(text))
+                return text
+        except Exception as e:
+            last_error = e
+            logger.warning("Ollama attempt %d/%d failed: %s", attempt + 1, max_retries, e)
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
+    raise RuntimeError(f"Ollama call failed after {max_retries} attempts: {last_error}")
+
+
+def call_ai(text):
+    """Call Ollama for resume extraction. Returns (raw_response, 'ollama')."""
+    system = (
+        "You are an expert resume parser. "
+        "Extract structured data and return ONLY valid JSON. "
+        "No markdown, no backticks, no explanation whatsoever."
+    )
+    prompt = f"Resume text:\n\n{text}\n\n{get_extraction_prompt()}"
+    raw = call_ollama(prompt, system_prompt=system)
+    return raw, "ollama"
+
+
+def score_resume_against_jd(resume_data, job_description):
+    """Score a single extracted resume dict against a JD. Returns (score_int, reason_str)."""
     summary_parts = []
     for field in ["full_name", "current_title", "years_of_experience", "skills",
                   "programming_languages", "frameworks", "education_degree",
@@ -409,9 +420,10 @@ def score_resume_against_jd(resume_data, job_description, provider_used_hint=Non
     resume_summary = "\n".join(summary_parts)
 
     prompt_text = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description)}"
+    system = "You are a technical recruiter. Return ONLY valid JSON, no markdown, no explanation."
 
     try:
-        raw, _ = call_ai_with_fallback(prompt_text, max_retries=3)
+        raw = call_ollama(prompt_text, system_prompt=system)
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
         match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -422,136 +434,8 @@ def score_resume_against_jd(resume_data, job_description, provider_used_hint=Non
             reason = str(parsed.get("match_reason", ""))
             return score, reason
     except Exception as e:
-        logger.warning("Scoring failed for candidate: %s", e)
+        logger.warning("Scoring failed: %s", e)
     return None, None
-
-
-# ── Provider call functions ────────────────────────────────────────────────────
-
-def parse_retry_seconds(error_message):
-    m = re.search(r'try again in (\d+)m([\d.]+)s', str(error_message))
-    if m:
-        return int(m.group(1)) * 60 + float(m.group(2))
-    m = re.search(r'try again in ([\d.]+)s', str(error_message))
-    if m:
-        return float(m.group(1))
-    return 30.0
-
-
-def call_groq(text):
-    """Single Groq call (no retry — retry handled by caller)."""
-    logger.debug("Calling Groq (%s), text length: %d chars", GROQ_MODEL, len(text))
-    t0 = time.monotonic()
-    response = groq_client.chat.completions.create(
-        model=GROQ_MODEL,
-        temperature=0.0,
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
-            },
-            {
-                "role": "user",
-                "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-            }
-        ]
-    )
-    elapsed = time.monotonic() - t0
-    logger.debug("Groq response received in %.2fs", elapsed)
-    return response.choices[0].message.content.strip()
-
-
-def call_gemini(text):
-    """Single Gemini call."""
-    logger.debug("Calling Gemini (gemini-2.5-flash), text length: %d chars", len(text))
-    t0 = time.monotonic()
-    prompt = (
-        "You are a resume parser. Extract structured data and return ONLY valid JSON "
-        "with no markdown, no backticks, no explanation.\n\n"
-        f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-    )
-    response = gemini_model.generate_content(prompt)
-    elapsed = time.monotonic() - t0
-    logger.debug("Gemini response received in %.2fs", elapsed)
-    raw = response.text.strip()
-    # Strip markdown fences if Gemini adds them
-    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    return raw.strip()
-
-
-def call_ai_with_fallback(text, max_retries=4):
-    """
-    Try providers in round-robin order. On rate-limit from one provider,
-    immediately try the other. Falls back to waiting only if both are exhausted.
-    """
-    providers_available = []
-    if groq_client:
-        providers_available.append("groq")
-    if gemini_model:
-        providers_available.append("gemini")
-
-    if not providers_available:
-        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
-
-    # Determine starting provider via round-robin
-    primary = _next_provider()
-    # Build ordered list: [primary, other, primary, other, ...]
-    others = [p for p in providers_available if p != primary]
-    order = []
-    for i in range(max_retries):
-        order.append(primary if i % 2 == 0 else (others[0] if others else primary))
-
-    logger.debug("AI call plan: primary=%s, attempts=%s", primary, order)
-
-    last_error = None
-    for attempt, provider in enumerate(order):
-        try:
-            logger.debug("AI attempt %d/%d using provider: %s", attempt + 1, max_retries, provider)
-            if provider == "groq":
-                result = call_groq(text), "groq"
-            else:
-                result = call_gemini(text), "gemini"
-            logger.debug("AI call succeeded on attempt %d via %s", attempt + 1, provider)
-            return result
-
-        except Exception as e:
-            err_str = str(e)
-            last_error = e
-            is_rate_limit = (
-                ('429' in err_str and 'rate_limit_exceeded' in err_str)  # Groq
-                or ('429' in err_str)                                      # Gemini
-                or ('quota' in err_str.lower())
-                or ('resource_exhausted' in err_str.lower())
-            )
-
-            if is_rate_limit:
-                logger.warning(
-                    "Rate limit hit on %s (attempt %d/%d) — %s",
-                    provider, attempt + 1, max_retries,
-                    err_str[:120]
-                )
-            else:
-                logger.error(
-                    "AI error on %s (attempt %d/%d): %s",
-                    provider, attempt + 1, max_retries, err_str[:200]
-                )
-
-            # If rate limited and we have an alternative provider, switch immediately
-            if is_rate_limit and others:
-                continue  # next iteration uses other provider
-
-            # For non-rate-limit errors, wait briefly and retry same provider
-            if attempt < len(order) - 1:
-                wait = min(parse_retry_seconds(err_str) + 2, 90) if is_rate_limit else 5
-                logger.info("Waiting %.1fs before retry...", wait)
-                time.sleep(wait)
-                continue
-
-            raise
-
-    raise RuntimeError(f"All AI providers failed after {max_retries} attempts. Last error: {last_error}")
 
 
 # ── Core extraction ───────────────────────────────────────────────────────────
@@ -566,11 +450,12 @@ def extract_resume_data(file_content, filename):
         raise ValueError("Could not extract readable text from file")
 
     original_len = len(text)
-    text = text[:6000]
-    if original_len > 6000:
-        logger.debug("'%s' — text truncated from %d to 6000 chars", filename, original_len)
+    # Increase context window slightly for local model — no token cost
+    text = text[:8000]
+    if original_len > 8000:
+        logger.debug("'%s' — text truncated from %d to 8000 chars", filename, original_len)
 
-    raw, provider_used = call_ai_with_fallback(text)
+    raw, provider_used = call_ai(text)
 
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
@@ -581,9 +466,9 @@ def extract_resume_data(file_content, filename):
         try:
             data = normalize_fields(json.loads(match.group()))
         except json.JSONDecodeError as e:
-            logger.warning("'%s' — JSON parse failed (%s), raw snippet: %s", filename, e, raw[:100])
+            logger.warning("'%s' — JSON parse failed (%s), raw snippet: %s", filename, e, raw[:200])
     else:
-        logger.warning("'%s' — no JSON object found in AI response, raw snippet: %s", filename, raw[:100])
+        logger.warning("'%s' — no JSON object found in response, raw snippet: %s", filename, raw[:200])
 
     for field, url in url_overrides.items():
         existing = data.get(field, "")
@@ -727,30 +612,45 @@ def sse_event(data):
 
 @app.route("/")
 def index():
-    logger.debug("GET / — serving index.html")
     return app.send_static_file('index.html')
 
 
 @app.route("/health")
 def health():
-    logger.debug("GET /health")
-    providers = {
-        "groq": groq_client is not None,
-        "gemini": gemini_model is not None
-    }
-    return jsonify({"status": "ok", "providers": providers})
+    """Health check — also reports Ollama connectivity."""
+    ollama_ok = False
+    ollama_model_ready = False
+    try:
+        resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        if resp.status_code == 200:
+            ollama_ok = True
+            models = [m["name"] for m in resp.json().get("models", [])]
+            model_base = OLLAMA_MODEL.split(":")[0]
+            ollama_model_ready = any(model_base in m for m in models)
+    except Exception:
+        pass
+
+    return jsonify({
+        "status": "ok",
+        "provider": "ollama",
+        "ollama_url": OLLAMA_BASE_URL,
+        "ollama_model": OLLAMA_MODEL,
+        "ollama_connected": ollama_ok,
+        "ollama_model_ready": ollama_model_ready,
+    })
 
 
 @app.route("/extract", methods=["POST"])
 def extract():
     """
-    Streaming SSE endpoint. Processes files sequentially.
-    Uses Groq + Gemini in round-robin; auto-falls back on rate limits.
-    Supports optional job_description field for match scoring.
-    Detects duplicate candidates by email/phone.
+    Streaming SSE endpoint.
+
+    Architecture for concurrency:
+    - Text extraction (PDF parsing, OCR) runs in a ThreadPoolExecutor — fully parallel.
+    - AI (Ollama) calls are serialised via OLLAMA_SEMAPHORE (one call at a time, GPU-bound).
+    - Results are streamed back as SSE as each resume completes, preserving real-time feedback.
     """
     if "files" not in request.files:
-        logger.warning("POST /extract — no files in request")
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
@@ -764,71 +664,116 @@ def extract():
             continue
         ext = Path(file.filename).suffix.lower()
         if ext not in [".pdf", ".doc", ".docx"]:
-            logger.warning("Rejected unsupported file type: '%s'", file.filename)
-            file_payloads.append({"filename": file.filename, "content": None, "error": "Unsupported file type"})
+            file_payloads.append({"filename": file.filename, "content": None,
+                                   "error": "Unsupported file type"})
         else:
             content = file.read()
-            logger.debug("Accepted file: '%s' (%d bytes)", file.filename, len(content))
             file_payloads.append({"filename": file.filename, "content": content, "error": None})
 
     if not file_payloads:
-        logger.warning("POST /extract — no valid files after filtering")
         return jsonify({"error": "No valid files found"}), 400
 
-    logger.info("POST /extract — starting batch of %d file(s)", len(file_payloads))
+    total = len(file_payloads)
+    logger.info("POST /extract — starting batch of %d file(s)", total)
 
     def generate():
         results = []
         errors  = []
-        total   = len(file_payloads)
         batch_start = time.monotonic()
+        seen_emails = {}
+        seen_phones = {}
 
-        # Duplicate tracking: maps normalised email/phone -> first candidate name
-        seen_emails  = {}
-        seen_phones  = {}
+        # Thread-safety lock for shared state (results, seen_emails/phones)
+        state_lock = threading.Lock()
 
         yield sse_event({"type": "start", "total": total})
+
+        # ── Phase 1: extract text from all files in parallel ──────────────────
+        text_results = {}  # filename -> (text, url_overrides, error)
+
+        def extract_text_task(payload):
+            fn = payload["filename"]
+            if payload["error"]:
+                return fn, None, None, payload["error"]
+            try:
+                text, url_overrides = extract_text_from_file(payload["content"], fn)
+                if not text or len(text.strip()) < 50:
+                    return fn, None, None, "Could not extract readable text from file"
+                return fn, text[:8000], url_overrides, None
+            except Exception as e:
+                return fn, None, None, str(e)
+
+        logger.info("Phase 1: extracting text from %d files (up to %d in parallel)", total, MAX_CONCURRENT_EXTRACT)
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_EXTRACT) as executor:
+            futures = {executor.submit(extract_text_task, p): p for p in file_payloads}
+            for future in as_completed(futures):
+                fn, text, url_overrides, err = future.result()
+                text_results[fn] = (text, url_overrides, err)
+
+        # ── Phase 2: AI extraction + scoring (serialised, GPU-locked) ─────────
+        logger.info("Phase 2: AI extraction for %d files (serialised via Ollama)", total)
 
         for i, payload in enumerate(file_payloads):
             filename  = payload["filename"]
             completed = i + 1
+            text, url_overrides, text_err = text_results.get(filename, (None, None, "Text extraction missing"))
 
-            if payload["error"]:
-                logger.warning("[%d/%d] Skipping '%s': %s", completed, total, filename, payload["error"])
-                errors.append({"file": filename, "error": payload["error"]})
+            if text_err:
+                logger.warning("[%d/%d] Skipping '%s': %s", completed, total, filename, text_err)
+                errors.append({"file": filename, "error": text_err})
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": False,
-                    "error": payload["error"], "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90)
+                    "error": text_err, "completed": completed, "total": total,
+                    "pct": round((completed / total) * 90)
                 })
                 continue
 
             try:
-                logger.info("[%d/%d] Extracting '%s'", completed, total, filename)
-                data = extract_resume_data(payload["content"], filename)
+                logger.info("[%d/%d] AI extracting '%s'", completed, total, filename)
+                t0 = time.monotonic()
+
+                raw, provider_used = call_ai(text)
+                raw = re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = re.sub(r"\n?```$", "", raw)
+
+                match_obj = re.search(r'\{.*\}', raw, re.DOTALL)
+                data = {}
+                if match_obj:
+                    try:
+                        data = normalize_fields(json.loads(match_obj.group()))
+                    except json.JSONDecodeError as e:
+                        logger.warning("'%s' — JSON parse error: %s", filename, e)
+                else:
+                    logger.warning("'%s' — no JSON in AI response", filename)
+
+                for field, url in (url_overrides or {}).items():
+                    existing = data.get(field, "")
+                    if not existing or not existing.startswith("http"):
+                        data[field] = url
+
                 data["filename"] = filename
 
-                # ── Duplicate detection ───────────────────────────────────────
+                # ── Duplicate detection ──────────────────────────────────────
                 dup_of = None
                 email_key = (data.get("email") or "").lower().strip()
                 phone_key  = re.sub(r'\D', '', data.get("phone") or "")
 
-                if email_key and email_key in seen_emails:
-                    dup_of = seen_emails[email_key]
-                elif phone_key and len(phone_key) >= 7 and phone_key in seen_phones:
-                    dup_of = seen_phones[phone_key]
+                with state_lock:
+                    if email_key and email_key in seen_emails:
+                        dup_of = seen_emails[email_key]
+                    elif phone_key and len(phone_key) >= 7 and phone_key in seen_phones:
+                        dup_of = seen_phones[phone_key]
 
-                if dup_of:
-                    data["duplicate_of"] = dup_of
-                    logger.info("'%s' flagged as duplicate of '%s'", filename, dup_of)
-                else:
-                    candidate_label = data.get("full_name") or filename
-                    if email_key:
-                        seen_emails[email_key] = candidate_label
-                    if phone_key and len(phone_key) >= 7:
-                        seen_phones[phone_key] = candidate_label
+                    if dup_of:
+                        data["duplicate_of"] = dup_of
+                    else:
+                        candidate_label = data.get("full_name") or filename
+                        if email_key:
+                            seen_emails[email_key] = candidate_label
+                        if phone_key and len(phone_key) >= 7:
+                            seen_phones[phone_key] = candidate_label
 
-                # ── Job match scoring (only if JD provided) ───────────────────
+                # ── JD match scoring ─────────────────────────────────────────
                 if job_description and not dup_of:
                     try:
                         score, reason = score_resume_against_jd(data, job_description)
@@ -839,26 +784,28 @@ def extract():
                     except Exception as score_err:
                         logger.warning("Scoring skipped for '%s': %s", filename, score_err)
 
-                results.append(data)
-                logger.info("[%d/%d] '%s' — OK", completed, total, filename)
+                elapsed = time.monotonic() - t0
+                fields_found = [k for k in data if data[k] and k != "filename"]
+                logger.info("[%d/%d] '%s' — OK in %.2fs (%d fields)", completed, total, filename, elapsed, len(fields_found))
+
+                with state_lock:
+                    results.append(data)
+
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": True,
-                    "error": None, "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90),
+                    "error": None, "completed": completed, "total": total,
+                    "pct": round((completed / total) * 90),
                     "data": data
                 })
+
             except Exception as e:
                 logger.error("[%d/%d] '%s' — FAILED: %s", completed, total, filename, e, exc_info=True)
                 errors.append({"file": filename, "error": str(e)})
                 yield sse_event({
                     "type": "progress", "filename": filename, "ok": False,
-                    "error": str(e), "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90)
+                    "error": str(e), "completed": completed, "total": total,
+                    "pct": round((completed / total) * 90)
                 })
-
-            # Small pause between files
-            if i < total - 1:
-                time.sleep(0.3)
 
         batch_elapsed = time.monotonic() - batch_start
 
@@ -874,8 +821,7 @@ def extract():
                     "type": "done", "success": True,
                     "processed": len(results), "errors": errors,
                     "download_url": "/download", "pct": 100,
-                    "results": results,
-                    "excel_b64": excel_b64
+                    "results": results, "excel_b64": excel_b64
                 })
             except Exception as e:
                 logger.error("Excel generation failed: %s", e, exc_info=True)
@@ -885,7 +831,6 @@ def extract():
                     "processed": 0, "errors": errors, "pct": 0
                 })
         else:
-            logger.error("Batch complete — no resumes could be processed (%d error(s))", len(errors))
             yield sse_event({
                 "type": "done", "success": False,
                 "error": "No resumes could be processed",
@@ -903,9 +848,7 @@ def extract():
 def download():
     excel_path = os.path.join(UPLOAD_FOLDER, "extracted_resumes.xlsx")
     if not os.path.exists(excel_path):
-        logger.warning("GET /download — no Excel file found at %s", excel_path)
         return jsonify({"error": "No file to download"}), 404
-    logger.info("GET /download — serving extracted_resumes.xlsx")
     return send_file(
         excel_path, as_attachment=True,
         download_name="extracted_resumes.xlsx",
@@ -921,7 +864,6 @@ WA_SERVICE_URL = os.environ.get("WA_SERVICE_URL", "http://localhost:3001")
 
 
 def _wa_request(method, path, body=None):
-    """Simple wrapper to call the Node WhatsApp service."""
     url = f"{WA_SERVICE_URL}{path}"
     data = json.dumps(body).encode() if body else None
     headers = {"Content-Type": "application/json"}
