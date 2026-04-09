@@ -10,10 +10,13 @@ import base64
 import pdfplumber
 import pypdf
 import docx2txt
+import httpx
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # OCR imports — optional, gracefully degraded if unavailable
 try:
@@ -34,68 +37,230 @@ logging.basicConfig(
 )
 logger = logging.getLogger("resumegrid")
 
-# Quieten noisy third-party loggers
 logging.getLogger("pdfplumber").setLevel(logging.WARNING)
 logging.getLogger("pdfminer").setLevel(logging.WARNING)
 logging.getLogger("pypdf").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+# ── Provider configuration ─────────────────────────────────────────────────────
+#
+# Priority order:
+#   1. Gemini (GEMINI_API_KEY) — fast, accurate, highly parallelizable (paid tier)
+#   2. Groq   (GROQ_API_KEY)   — fast, good for bulk, free tier rate-limited
+#   3. Ollama (local)           — slowest, serialized, GPU-bound
+#
+# Set MAX_CONCURRENT_AI to control parallel AI calls.
+# Gemini paid tier can handle 20-50 concurrent calls easily.
+# Groq free tier: keep at 5-10 to avoid rate limits.
+# Ollama: forced to 1 (GPU serialized).
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "mistral-nemo")
+
+# Gemini model — gemini-2.0-flash is best for speed + accuracy at paid tier
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GROQ_MODEL   = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Determine primary provider and concurrency
+if GEMINI_API_KEY:
+    PRIMARY_PROVIDER = "gemini"
+    # Paid tier: very high concurrency. Adjust down if you hit quota errors.
+    MAX_CONCURRENT_AI = int(os.environ.get("MAX_CONCURRENT_AI", "20"))
+elif GROQ_API_KEY:
+    PRIMARY_PROVIDER = "groq"
+    MAX_CONCURRENT_AI = int(os.environ.get("MAX_CONCURRENT_AI", "8"))
+else:
+    PRIMARY_PROVIDER = "ollama"
+    MAX_CONCURRENT_AI = 1  # GPU-serialized
+
+MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "8"))
+
 logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
+logger.info("Primary AI provider: %s | Concurrent AI calls: %d", PRIMARY_PROVIDER, MAX_CONCURRENT_AI)
 if OCR_AVAILABLE:
     logger.info("OCR support enabled (pdf2image + pytesseract)")
 else:
-    logger.warning("OCR support NOT available — image-based PDFs will fail silently. "
-                   "Install pdf2image and pytesseract to enable OCR.")
+    logger.warning("OCR support NOT available — install pdf2image + pytesseract to enable.")
 
-# ── AI client setup ────────────────────────────────────────────────────────────
-GROQ_API_KEY   = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY and not GROQ_API_KEY:
+    logger.warning("No cloud AI keys found — falling back to Ollama (slow). Set GEMINI_API_KEY for best performance.")
 
-groq_client = None
-if GROQ_API_KEY:
+
+# ── Rate limit sentinel ───────────────────────────────────────────────────────
+
+class RateLimitError(Exception):
+    """Raised on 429 — immediately signals call_ai to fall through to next provider."""
+    pass
+
+
+# ── AI semaphore (limits concurrent cloud calls) ──────────────────────────────
+
+AI_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_AI)
+
+# ── Gemini call ────────────────────────────────────────────────────────────────
+
+def call_gemini(prompt_text, system_prompt=None):
+    """
+    Call Gemini. On 429: raises RateLimitError immediately (no wait/retry).
+    On other errors: 1 quick retry then gives up — let call_ai handle fallback.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+        }
+    }
+    if system_prompt:
+        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+    last_err = None
+    for attempt in range(2):  # max 2 attempts — fail fast
+        try:
+            with AI_SEMAPHORE:
+                resp = httpx.post(url, json=payload, timeout=30.0)
+
+            if resp.status_code == 429:
+                logger.warning("Gemini 429 — switching to next provider")
+                raise RateLimitError("Gemini 429")
+
+            resp.raise_for_status()
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        except RateLimitError:
+            raise  # never retry a rate limit — fall through immediately
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(1)  # one short wait on transient error, then give up
+
+    raise RuntimeError(f"Gemini failed: {last_err}")
+
+
+# ── Groq call ──────────────────────────────────────────────────────────────────
+
+def call_groq(prompt_text, system_prompt=None):
+    """
+    Call Groq. On 429: raises RateLimitError immediately.
+    On other errors: 1 quick retry then gives up.
+    """
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
+
+    last_err = None
+    for attempt in range(2):  # max 2 attempts — fail fast
+        try:
+            with AI_SEMAPHORE:
+                resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+
+            if resp.status_code == 429:
+                logger.warning("Groq 429 — switching to next provider")
+                raise RateLimitError("Groq 429")
+
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+
+        except RateLimitError:
+            raise
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(1)
+
+    raise RuntimeError(f"Groq failed: {last_err}")
+
+
+# ── Ollama call ────────────────────────────────────────────────────────────────
+
+OLLAMA_SEMAPHORE = threading.Semaphore(1)  # GPU-serialized
+
+def call_ollama(prompt_text, system_prompt=None):
+    """Call local Ollama. 2 attempts, serialized via semaphore."""
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 2048, "top_p": 1.0}
+    }
+
+    last_err = None
+    for attempt in range(2):
+        try:
+            with OLLAMA_SEMAPHORE:
+                resp = httpx.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=120.0)
+                resp.raise_for_status()
+                return resp.json()["message"]["content"].strip()
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(2)
+
+    raise RuntimeError(f"Ollama failed: {last_err}")
+
+
+# ── Unified AI call with fallback chain ───────────────────────────────────────
+
+def call_ai(text, is_scoring=False):
+    """
+    Call AI with instant fallback: Gemini → Groq → Ollama.
+    - 429 (rate limit): skips to next provider immediately, no waiting.
+    - Other errors: 1 quick retry per provider, then skip.
+    - Only tries providers with keys actually configured.
+    Returns (raw_response_str, provider_name).
+    """
+    system = (
+        "You are an expert resume parser. "
+        "Extract structured data and return ONLY valid JSON. "
+        "No markdown, no backticks, no explanation whatsoever."
+    ) if not is_scoring else (
+        "You are a technical recruiter. Return ONLY valid JSON, no markdown, no explanation."
+    )
+
+    has_gemini = bool(GEMINI_API_KEY and GEMINI_API_KEY.strip())
+    has_groq   = bool(GROQ_API_KEY and GROQ_API_KEY.strip())
+
+    if has_gemini:
+        try:
+            return call_gemini(text, system_prompt=system), "gemini"
+        except RateLimitError:
+            logger.warning("Gemini rate-limited — falling through to Groq/Ollama")
+        except Exception as e:
+            logger.warning("Gemini error — falling through: %s", e)
+
+    if has_groq:
+        try:
+            return call_groq(text, system_prompt=system), "groq"
+        except RateLimitError:
+            logger.warning("Groq rate-limited — falling through to Ollama")
+        except Exception as e:
+            logger.warning("Groq error — falling through: %s", e)
+
+    # Ollama: only if no cloud keys, or all cloud providers failed
     try:
-        from groq import Groq
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        logger.info("Groq client initialised (model: %s)", "llama-3.3-70b-versatile")
+        return call_ollama(text, system_prompt=system), "ollama"
     except Exception as e:
-        logger.error("Failed to initialise Groq client: %s", e)
-        groq_client = None
-else:
-    logger.warning("GROQ_API_KEY not set — Groq provider disabled")
+        raise RuntimeError(f"All AI providers failed. Last error: {e}")
 
-gemini_model = None
-if GEMINI_API_KEY:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-        logger.info("Gemini client initialised (model: gemini-2.5-flash)")
-    except Exception as e:
-        logger.error("Failed to initialise Gemini client: %s", e)
-        gemini_model = None
-else:
-    logger.warning("GEMINI_API_KEY not set — Gemini provider disabled")
-
-GROQ_MODEL = "llama-3.3-70b-versatile"
-
-# Round-robin provider state
-_provider_index = 0  # 0 = Groq, 1 = Gemini
-
-
-def _next_provider():
-    """Return ('groq'|'gemini') cycling between available providers."""
-    global _provider_index
-    providers = []
-    if groq_client:
-        providers.append("groq")
-    if gemini_model:
-        providers.append("gemini")
-    if not providers:
-        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
-    provider = providers[_provider_index % len(providers)]
-    _provider_index += 1
-    return provider
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -192,56 +357,138 @@ def extract_hyperlinks_from_pdf(tmp_path):
 
 
 def is_image_based_pdf(text, page_count):
-    """
-    Detect PDFs where text extraction failed or produced garbage.
-    Two signals:
-      1. Very low character yield  — fewer than 300 chars per page on average.
-      2. High (cid:N) garbling ratio — >10% of word tokens are encoding artifacts,
-         which indicates a font that couldn't be decoded (common in scanned/image PDFs).
-    Either signal alone is sufficient to trigger OCR.
-    """
     stripped = text.strip() if text else ""
-
-    # Signal 1: low yield
     if len(stripped) < page_count * 300:
         return True
-
-    # Signal 2: garbled font encoding
     import re as _re
     cid_hits = len(_re.findall(r'\(cid:\d+\)', stripped))
     word_count = len(stripped.split())
     if word_count > 0 and cid_hits / word_count > 0.10:
         return True
-
     return False
 
 
 def ocr_pdf(tmp_path, filename):
-    """
-    Render each PDF page to an image and run Tesseract OCR.
-    Returns the combined OCR text, or raises if OCR is unavailable.
-    """
     if not OCR_AVAILABLE:
         raise RuntimeError(
-            "OCR is not available. Install pdf2image and pytesseract "
-            "to process image-based PDFs."
+            "OCR is not available. Install pdf2image and pytesseract to process image-based PDFs."
         )
     logger.info("'%s' — running OCR (image-based PDF detected)", filename)
     t0 = time.monotonic()
-    pages = pdf_to_images(tmp_path, dpi=200)
+    poppler_path = os.environ.get("POPPLER_PATH", "/usr/bin")
+    pages = pdf_to_images(tmp_path, dpi=200, poppler_path=poppler_path)
     parts = []
     for i, page_img in enumerate(pages):
         page_text = pytesseract.image_to_string(page_img, lang="eng")
         if page_text.strip():
             parts.append(page_text)
-        logger.debug("'%s' — OCR page %d/%d: %d chars", filename, i + 1, len(pages), len(page_text))
     text = "\n".join(parts)
     elapsed = time.monotonic() - t0
-    logger.info(
-        "'%s' — OCR complete in %.2fs: %d pages → %d chars",
-        filename, elapsed, len(pages), len(text)
-    )
+    logger.info("'%s' — OCR complete in %.2fs: %d pages → %d chars", filename, elapsed, len(pages), len(text))
     return text
+
+
+def extract_text_via_gemini_vision(tmp_path, filename):
+    """
+    Use Gemini Vision to extract text from image-based PDFs.
+
+    Strategy (in order of preference):
+    1. Send the PDF directly as inline_data with mime_type application/pdf —
+       Gemini 1.5+ natively reads PDFs without poppler or any conversion.
+    2. If pdf_to_images (poppler) IS available, fall back to per-page JPEG method.
+
+    This means poppler is completely optional — we only use it if Gemini PDF
+    inlining somehow fails.
+    """
+    import base64 as _b64
+    import io as _io
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    extraction_prompt = (
+        "This is a resume/CV document. Extract ALL text content exactly as it appears, "
+        "preserving the reading order and structure. Include every piece of information: "
+        "name, contact details, work experience, education, skills, projects, certifications, "
+        "achievements, etc. Output only the extracted text, nothing else."
+    )
+
+    # ── Strategy 1: Send PDF directly to Gemini (no poppler needed) ──────────
+    try:
+        with open(tmp_path, "rb") as f:
+            pdf_bytes = f.read()
+        pdf_b64 = _b64.b64encode(pdf_bytes).decode("utf-8")
+
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {
+                        "inline_data": {
+                            "mime_type": "application/pdf",
+                            "data": pdf_b64
+                        }
+                    },
+                    {"text": extraction_prompt}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192}
+        }
+
+        resp = httpx.post(url, json=payload, timeout=90.0)
+        if resp.status_code == 429:
+            raise RateLimitError("Gemini Vision 429")
+        resp.raise_for_status()
+        result = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if result and len(result) > 100:
+            logger.info("'%s' — Gemini PDF-inline extracted %d chars", filename, len(result))
+            return result
+        logger.warning("'%s' — Gemini PDF-inline returned short text (%d chars), trying page-image fallback",
+                       filename, len(result))
+    except RateLimitError:
+        raise
+    except Exception as e:
+        logger.warning("'%s' — Gemini PDF-inline failed (%s), trying page-image fallback", filename, e)
+
+    # ── Strategy 2: Per-page JPEG (requires pdf2image + poppler) ─────────────
+    if not OCR_AVAILABLE:
+        raise RuntimeError(
+            "Gemini PDF-inline failed and pdf2image/poppler is not installed. "
+            "Cannot process image-based PDF without one of these."
+        )
+
+    poppler_path = os.environ.get("POPPLER_PATH", "/usr/bin")
+    pages = pdf_to_images(tmp_path, dpi=200, poppler_path=poppler_path)
+    all_text_parts = []
+
+    for i, page_img in enumerate(pages):
+        buf = _io.BytesIO()
+        page_img.save(buf, format="JPEG", quality=90)
+        img_b64 = _b64.b64encode(buf.getvalue()).decode("utf-8")
+
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                    {"text": (
+                        "This is page of a resume. Extract ALL text exactly as it appears, "
+                        "preserving structure. Output only the extracted text, nothing else."
+                    )}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 4096}
+        }
+
+        resp = httpx.post(url, json=payload, timeout=60.0)
+        if resp.status_code == 429:
+            raise RateLimitError("Gemini Vision 429")
+        resp.raise_for_status()
+        page_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if page_text:
+            all_text_parts.append(page_text)
+
+    result = "\n\n".join(all_text_parts)
+    logger.info("'%s' — Gemini page-image extracted %d chars from %d page(s)", filename, len(result), len(pages))
+    return result
 
 
 def classify_urls(urls):
@@ -259,6 +506,58 @@ def classify_urls(urls):
     return result
 
 
+def extract_text_from_pdf_smart(tmp_path, filename):
+    """
+    Multi-strategy PDF text extraction:
+    1. pdfplumber with layout=True (preserves column order better than default)
+    2. Falls back to pdfplumber default if layout mode gives less text
+    Returns (text, num_pages, is_image_based)
+    """
+    best_text = ""
+    num_pages = 1
+    try:
+        with pdfplumber.open(tmp_path) as pdf:
+            num_pages = len(pdf.pages)
+
+            # Strategy A: layout=True — better for multi-column, preserves spatial reading order
+            parts_layout = []
+            for page in pdf.pages:
+                try:
+                    t = page.extract_text(layout=True)
+                    if t:
+                        parts_layout.append(t)
+                except Exception:
+                    pass
+            text_layout = "\n".join(parts_layout)
+
+            # Strategy B: default extraction — sometimes better for simple single-column
+            parts_default = []
+            for page in pdf.pages:
+                try:
+                    t = page.extract_text()
+                    if t:
+                        parts_default.append(t)
+                except Exception:
+                    pass
+            text_default = "\n".join(parts_default)
+
+            # Pick whichever got more real content (fewer cid: artifacts)
+            def quality_score(t):
+                import re as _re
+                if not t:
+                    return 0
+                cid_hits = len(_re.findall(r'\(cid:\d+\)', t))
+                return len(t.strip()) - cid_hits * 5
+
+            best_text = text_layout if quality_score(text_layout) >= quality_score(text_default) else text_default
+
+    except Exception as e:
+        logger.warning("'%s' — pdfplumber failed: %s", filename, e)
+
+    image_based = is_image_based_pdf(best_text, num_pages)
+    return best_text, num_pages, image_based
+
+
 def extract_text_from_file(file_content, filename):
     ext = Path(filename).suffix.lower()
     logger.debug("Extracting text from '%s' (type: %s, size: %d bytes)", filename, ext, len(file_content))
@@ -268,44 +567,30 @@ def extract_text_from_file(file_content, filename):
             tmp.write(file_content)
             tmp_path = tmp.name
         try:
-            parts = []
-            with pdfplumber.open(tmp_path) as pdf:
-                num_pages = len(pdf.pages)
-                for page in pdf.pages:
-                    t = page.extract_text()
-                    if t:
-                        parts.append(t)
-            text = "\n".join(parts)
+            text, num_pages, image_based = extract_text_from_pdf_smart(tmp_path, filename)
             urls = extract_hyperlinks_from_pdf(tmp_path)
             url_overrides = classify_urls(urls)
-            logger.debug(
-                "'%s' — PDF extracted: %d pages, %d chars, %d hyperlinks found",
-                filename, num_pages, len(text), len(urls)
-            )
 
-            # Fallback to OCR if the PDF appears to be image-based
-            if is_image_based_pdf(text, num_pages):
-                logger.info(
-                    "'%s' — low text yield (%d chars across %d pages), "
-                    "treating as image-based PDF and attempting OCR",
-                    filename, len(text.strip()), num_pages
-                )
-                try:
-                    ocr_text = ocr_pdf(tmp_path, filename)
-                    if len(ocr_text.strip()) > len(text.strip()):
-                        logger.info(
-                            "'%s' — OCR improved text yield: %d → %d chars",
-                            filename, len(text.strip()), len(ocr_text.strip())
-                        )
-                        text = ocr_text
-                    else:
-                        logger.warning(
-                            "'%s' — OCR did not improve yield (%d chars), keeping original",
-                            filename, len(ocr_text.strip())
-                        )
-                except Exception as ocr_err:
-                    logger.error("'%s' — OCR failed: %s", filename, ocr_err)
-                    # Continue with whatever pdfplumber managed to extract
+            if image_based:
+                # Try Gemini Vision first (best accuracy for complex layouts/handwriting)
+                # Falls back to Tesseract OCR if Gemini not available
+                logger.info("'%s' — image-based PDF detected, trying vision extraction", filename)
+                vision_text = None
+
+                if GEMINI_API_KEY and GEMINI_API_KEY.strip():
+                    try:
+                        vision_text = extract_text_via_gemini_vision(tmp_path, filename)
+                    except Exception as ve:
+                        logger.warning("'%s' — Gemini Vision failed, falling back to OCR: %s", filename, ve)
+
+                if not vision_text and OCR_AVAILABLE:
+                    try:
+                        vision_text = ocr_pdf(tmp_path, filename)
+                    except Exception as ocr_err:
+                        logger.error("'%s' — OCR failed: %s", filename, ocr_err)
+
+                if vision_text and len(vision_text.strip()) > len(text.strip()):
+                    text = vision_text
 
             return text, url_overrides
         finally:
@@ -321,10 +606,6 @@ def extract_text_from_file(file_content, filename):
         try:
             text = docx2txt.process(tmp_path)
             url_overrides = extract_hyperlinks_from_docx(tmp_path)
-            logger.debug(
-                "'%s' — DOCX extracted: %d chars, %d hyperlinks found",
-                filename, len(text) if text else 0, len(url_overrides)
-            )
             return text, url_overrides
         finally:
             try:
@@ -351,27 +632,51 @@ def extract_hyperlinks_from_docx(tmp_path):
     return classify_urls(urls)
 
 
-# ── AI prompt ─────────────────────────────────────────────────────────────────
+# ── AI prompts ─────────────────────────────────────────────────────────────────
 
 def get_extraction_prompt():
-    return """Extract ALL information from this resume and return it as a JSON object.
+    return """Extract ALL information from this resume. Return a single JSON object.
 
-Include these fields (use null if not found):
-- full_name, email, phone, location, linkedin, github, portfolio
-- current_title, years_of_experience, summary
-- skills, programming_languages, frameworks
-- education_degree, education_institution, education_year, education_gpa
-- companies_worked (comma-separated list), most_recent_company, most_recent_role, most_recent_duration, total_companies
-- certifications, languages_spoken, projects, achievements
-- last_ctc (last/current CTC or salary - if not explicitly mentioned, leave as null)
-- current_status ("Employed" if currently working, "Not Employed" if between jobs, "Fresher" if no work experience)
+Fields to extract (use null if genuinely not present):
+- full_name: candidate's full name
+- email, phone, location
+- linkedin: full LinkedIn URL or handle
+- github: full GitHub URL or handle
+- portfolio: personal website/portfolio URL
+- current_title: their current or most recent job title
+- years_of_experience: total years (compute from dates if not stated explicitly)
+- summary: professional summary or objective paragraph
+- skills: all technical and soft skills, comma-separated
+- programming_languages: programming languages only, comma-separated
+- frameworks: frameworks, libraries, tools, comma-separated
+- education_degree: highest degree (e.g. "B.Tech Computer Science", "MBA Marketing")
+- education_institution: university/college name
+- education_year: graduation year or expected year
+- education_gpa: GPA, CGPA, or percentage if mentioned
+- companies_worked: ALL companies/organisations ever worked at, comma-separated (include internships)
+- most_recent_company: name of their most recent employer
+- most_recent_role: title at most recent company
+- most_recent_duration: duration at most recent company (e.g. "Jun 2024 - Present", "2 years")
+- total_companies: count of distinct companies/organisations
+- certifications: all certifications and courses, comma-separated
+- languages_spoken: human languages (English, Hindi, etc.), comma-separated
+- projects: key project names and one-line descriptions, semicolon-separated
+- achievements: awards, honours, notable accomplishments
+- last_ctc: stated salary/CTC/compensation — null if not mentioned
+- current_status: MUST be exactly one of "Employed", "Not Employed", or "Fresher"
 
-For current_status:
-- If mentions "current" role or dates like "2023-Present" -> "Employed"
-- If most recent job ended in past or mentions "seeking" -> "Not Employed"
-- If no work experience or only internships/projects -> "Fresher"
+Rules for current_status:
+- "Employed": has a current role, or dates show "Present" / ongoing
+- "Not Employed": most recent role ended and no current role shown
+- "Fresher": no professional work experience (internships alone = Fresher)
 
-Return ONLY valid JSON with no explanation or markdown."""
+Rules for experience fields:
+- Look for EXPERIENCE, WORK HISTORY, EMPLOYMENT sections carefully
+- Internships count as experience for companies_worked and total_companies
+- If dates are given (e.g. "Jun 2023 - Jul 2023"), calculate duration yourself
+- years_of_experience: sum all work durations; if only internships and no full-time, state "< 1 year"
+
+CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explanation."""
 
 
 def get_scoring_prompt(job_description):
@@ -387,217 +692,16 @@ Score the candidate from 0 to 100 based on:
 - Education & certifications (10 points)
 - Overall fit (10 points)
 
-Return ONLY a JSON object with exactly these fields:
+Return ONLY a JSON object with exactly these two fields:
 {{
   "match_score": <integer 0-100>,
-  "match_reason": "<one sentence summary of why they fit or don't fit>"
+  "match_reason": "<one sentence summary of fit>"
 }}
 
 No markdown, no explanation, just the JSON."""
 
 
-def score_resume_against_jd(resume_data, job_description, provider_used_hint=None):
-    """Score a single already-extracted resume dict against a JD. Returns (score_int, reason_str)."""
-    # Build a compact resume summary from extracted fields for the scoring call
-    summary_parts = []
-    for field in ["full_name", "current_title", "years_of_experience", "skills",
-                  "programming_languages", "frameworks", "education_degree",
-                  "certifications", "summary", "companies_worked"]:
-        val = resume_data.get(field)
-        if val:
-            summary_parts.append(f"{field}: {val}")
-    resume_summary = "\n".join(summary_parts)
-
-    prompt_text = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description)}"
-
-    try:
-        raw, _ = call_ai_with_fallback(prompt_text, max_retries=3)
-        raw = re.sub(r"^```[a-z]*\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            parsed = json.loads(match.group())
-            score = int(parsed.get("match_score", 0))
-            score = max(0, min(100, score))
-            reason = str(parsed.get("match_reason", ""))
-            return score, reason
-    except Exception as e:
-        logger.warning("Scoring failed for candidate: %s", e)
-    return None, None
-
-
-# ── Provider call functions ────────────────────────────────────────────────────
-
-def parse_retry_seconds(error_message):
-    m = re.search(r'try again in (\d+)m([\d.]+)s', str(error_message))
-    if m:
-        return int(m.group(1)) * 60 + float(m.group(2))
-    m = re.search(r'try again in ([\d.]+)s', str(error_message))
-    if m:
-        return float(m.group(1))
-    return 30.0
-
-
-def call_groq(text):
-    """Single Groq call (no retry — retry handled by caller)."""
-    logger.debug("Calling Groq (%s), text length: %d chars", GROQ_MODEL, len(text))
-    t0 = time.monotonic()
-    response = groq_client.chat.completions.create(
-        model=GROQ_MODEL,
-        temperature=0.0,
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a resume parser. Extract structured data and return ONLY valid JSON with no markdown, no backticks, no explanation."
-            },
-            {
-                "role": "user",
-                "content": f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-            }
-        ]
-    )
-    elapsed = time.monotonic() - t0
-    logger.debug("Groq response received in %.2fs", elapsed)
-    return response.choices[0].message.content.strip()
-
-
-def call_gemini(text):
-    """Single Gemini call."""
-    logger.debug("Calling Gemini (gemini-2.5-flash), text length: %d chars", len(text))
-    t0 = time.monotonic()
-    prompt = (
-        "You are a resume parser. Extract structured data and return ONLY valid JSON "
-        "with no markdown, no backticks, no explanation.\n\n"
-        f"Resume:\n\n{text}\n\n{get_extraction_prompt()}"
-    )
-    response = gemini_model.generate_content(prompt)
-    elapsed = time.monotonic() - t0
-    logger.debug("Gemini response received in %.2fs", elapsed)
-    raw = response.text.strip()
-    # Strip markdown fences if Gemini adds them
-    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    return raw.strip()
-
-
-def call_ai_with_fallback(text, max_retries=4):
-    """
-    Try providers in round-robin order. On rate-limit from one provider,
-    immediately try the other. Falls back to waiting only if both are exhausted.
-    """
-    providers_available = []
-    if groq_client:
-        providers_available.append("groq")
-    if gemini_model:
-        providers_available.append("gemini")
-
-    if not providers_available:
-        raise RuntimeError("No AI provider configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
-
-    # Determine starting provider via round-robin
-    primary = _next_provider()
-    # Build ordered list: [primary, other, primary, other, ...]
-    others = [p for p in providers_available if p != primary]
-    order = []
-    for i in range(max_retries):
-        order.append(primary if i % 2 == 0 else (others[0] if others else primary))
-
-    logger.debug("AI call plan: primary=%s, attempts=%s", primary, order)
-
-    last_error = None
-    for attempt, provider in enumerate(order):
-        try:
-            logger.debug("AI attempt %d/%d using provider: %s", attempt + 1, max_retries, provider)
-            if provider == "groq":
-                result = call_groq(text), "groq"
-            else:
-                result = call_gemini(text), "gemini"
-            logger.debug("AI call succeeded on attempt %d via %s", attempt + 1, provider)
-            return result
-
-        except Exception as e:
-            err_str = str(e)
-            last_error = e
-            is_rate_limit = (
-                ('429' in err_str and 'rate_limit_exceeded' in err_str)  # Groq
-                or ('429' in err_str)                                      # Gemini
-                or ('quota' in err_str.lower())
-                or ('resource_exhausted' in err_str.lower())
-            )
-
-            if is_rate_limit:
-                logger.warning(
-                    "Rate limit hit on %s (attempt %d/%d) — %s",
-                    provider, attempt + 1, max_retries,
-                    err_str[:120]
-                )
-            else:
-                logger.error(
-                    "AI error on %s (attempt %d/%d): %s",
-                    provider, attempt + 1, max_retries, err_str[:200]
-                )
-
-            # If rate limited and we have an alternative provider, switch immediately
-            if is_rate_limit and others:
-                continue  # next iteration uses other provider
-
-            # For non-rate-limit errors, wait briefly and retry same provider
-            if attempt < len(order) - 1:
-                wait = min(parse_retry_seconds(err_str) + 2, 90) if is_rate_limit else 5
-                logger.info("Waiting %.1fs before retry...", wait)
-                time.sleep(wait)
-                continue
-
-            raise
-
-    raise RuntimeError(f"All AI providers failed after {max_retries} attempts. Last error: {last_error}")
-
-
 # ── Core extraction ───────────────────────────────────────────────────────────
-
-def extract_resume_data(file_content, filename):
-    t0 = time.monotonic()
-    logger.info("Processing '%s' (%d bytes)", filename, len(file_content))
-
-    text, url_overrides = extract_text_from_file(file_content, filename)
-
-    if not text or len(text.strip()) < 50:
-        raise ValueError("Could not extract readable text from file")
-
-    original_len = len(text)
-    text = text[:6000]
-    if original_len > 6000:
-        logger.debug("'%s' — text truncated from %d to 6000 chars", filename, original_len)
-
-    raw, provider_used = call_ai_with_fallback(text)
-
-    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
-    data = {}
-    if match:
-        try:
-            data = normalize_fields(json.loads(match.group()))
-        except json.JSONDecodeError as e:
-            logger.warning("'%s' — JSON parse failed (%s), raw snippet: %s", filename, e, raw[:100])
-    else:
-        logger.warning("'%s' — no JSON object found in AI response, raw snippet: %s", filename, raw[:100])
-
-    for field, url in url_overrides.items():
-        existing = data.get(field, "")
-        if not existing or not existing.startswith("http"):
-            data[field] = url
-
-    fields_found = [k for k in data if data[k]]
-    elapsed = time.monotonic() - t0
-    logger.info(
-        "Finished '%s' in %.2fs via %s — %d fields extracted",
-        filename, elapsed, provider_used, len(fields_found)
-    )
-    return data
-
 
 def normalize_fields(data):
     normalized = {}
@@ -617,6 +721,69 @@ def normalize_fields(data):
         if not matched:
             normalized[key_lower] = str(value)
     return normalized
+
+
+def extract_single_resume(filename, text, url_overrides, job_description=None):
+    """
+    Full AI extraction + optional JD scoring for one resume.
+    This entire function runs in a thread — fully parallel across resumes.
+    """
+    t0 = time.monotonic()
+    logger.info("AI extracting '%s'", filename)
+
+    prompt = f"Resume text:\n\n{text[:12000]}\n\n{get_extraction_prompt()}"
+    raw, provider_used = call_ai(prompt)
+
+    raw = re.sub(r"^```[a-z]*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw)
+
+    match_obj = re.search(r'\{.*\}', raw, re.DOTALL)
+    data = {}
+    if match_obj:
+        try:
+            data = normalize_fields(json.loads(match_obj.group()))
+        except json.JSONDecodeError as e:
+            logger.warning("'%s' — JSON parse error: %s", filename, e)
+    else:
+        logger.warning("'%s' — no JSON in AI response", filename)
+
+    for field, url in (url_overrides or {}).items():
+        existing = data.get(field, "")
+        if not existing or not existing.startswith("http"):
+            data[field] = url
+
+    data["filename"] = filename
+
+    # JD scoring (also via AI, fully parallel)
+    if job_description:
+        try:
+            summary_parts = []
+            for field in ["full_name", "current_title", "years_of_experience", "skills",
+                          "programming_languages", "frameworks", "education_degree",
+                          "certifications", "summary", "companies_worked"]:
+                val = data.get(field)
+                if val:
+                    summary_parts.append(f"{field}: {val}")
+            resume_summary = "\n".join(summary_parts)
+            score_prompt = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description)}"
+            score_raw, _ = call_ai(score_prompt, is_scoring=True)
+            score_raw = re.sub(r"^```[a-z]*\n?", "", score_raw)
+            score_raw = re.sub(r"\n?```$", "", score_raw)
+            score_match = re.search(r'\{.*\}', score_raw, re.DOTALL)
+            if score_match:
+                parsed = json.loads(score_match.group())
+                score = max(0, min(100, int(parsed.get("match_score", 0))))
+                data["match_score"] = str(score)
+                data["match_reason"] = str(parsed.get("match_reason", ""))
+                logger.info("'%s' — match score: %s/100", filename, score)
+        except Exception as score_err:
+            logger.warning("Scoring skipped for '%s': %s", filename, score_err)
+
+    elapsed = time.monotonic() - t0
+    fields_found = [k for k in data if data[k] and k != "filename"]
+    logger.info("'%s' — OK in %.2fs via %s (%d fields)", filename, elapsed, provider_used, len(fields_found))
+
+    return data
 
 
 # ── Excel generation ──────────────────────────────────────────────────────────
@@ -727,30 +894,49 @@ def sse_event(data):
 
 @app.route("/")
 def index():
-    logger.debug("GET / — serving index.html")
     return app.send_static_file('index.html')
 
 
 @app.route("/health")
 def health():
-    logger.debug("GET /health")
-    providers = {
-        "groq": groq_client is not None,
-        "gemini": gemini_model is not None
-    }
-    return jsonify({"status": "ok", "providers": providers})
+    """Health check — reports AI provider connectivity."""
+    providers = {}
+
+    if GEMINI_API_KEY:
+        providers["gemini"] = {"configured": True, "model": GEMINI_MODEL}
+    if GROQ_API_KEY:
+        providers["groq"] = {"configured": True, "model": GROQ_MODEL}
+
+    # Quick Ollama check
+    try:
+        resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        if resp.status_code == 200:
+            models = [m["name"] for m in resp.json().get("models", [])]
+            providers["ollama"] = {"configured": True, "models": models}
+    except Exception:
+        providers["ollama"] = {"configured": False}
+
+    return jsonify({
+        "status": "ok",
+        "primary_provider": PRIMARY_PROVIDER,
+        "max_concurrent_ai": MAX_CONCURRENT_AI,
+        "providers": providers,
+    })
 
 
 @app.route("/extract", methods=["POST"])
 def extract():
     """
-    Streaming SSE endpoint. Processes files sequentially.
-    Uses Groq + Gemini in round-robin; auto-falls back on rate limits.
-    Supports optional job_description field for match scoring.
-    Detects duplicate candidates by email/phone.
+    Streaming SSE endpoint — fully parallel AI extraction.
+
+    Architecture:
+    - Phase 1: Text extraction from all files in parallel (ThreadPoolExecutor)
+    - Phase 2: AI extraction for all files in parallel (ThreadPoolExecutor)
+      - With Gemini/Groq: 20+ concurrent calls → massive speedup
+      - With Ollama: serialized via semaphore (GPU constraint)
+    - Results streamed back as SSE as each resume completes
     """
     if "files" not in request.files:
-        logger.warning("POST /extract — no files in request")
         return jsonify({"error": "No files uploaded"}), 400
 
     files = request.files.getlist("files")
@@ -764,118 +950,139 @@ def extract():
             continue
         ext = Path(file.filename).suffix.lower()
         if ext not in [".pdf", ".doc", ".docx"]:
-            logger.warning("Rejected unsupported file type: '%s'", file.filename)
-            file_payloads.append({"filename": file.filename, "content": None, "error": "Unsupported file type"})
+            file_payloads.append({"filename": file.filename, "content": None,
+                                   "error": "Unsupported file type"})
         else:
             content = file.read()
-            logger.debug("Accepted file: '%s' (%d bytes)", file.filename, len(content))
             file_payloads.append({"filename": file.filename, "content": content, "error": None})
 
     if not file_payloads:
-        logger.warning("POST /extract — no valid files after filtering")
         return jsonify({"error": "No valid files found"}), 400
 
-    logger.info("POST /extract — starting batch of %d file(s)", len(file_payloads))
+    total = len(file_payloads)
+    logger.info("POST /extract — starting batch of %d file(s) | provider: %s | concurrency: %d",
+                total, PRIMARY_PROVIDER, MAX_CONCURRENT_AI)
 
     def generate():
         results = []
         errors  = []
-        total   = len(file_payloads)
         batch_start = time.monotonic()
-
-        # Duplicate tracking: maps normalised email/phone -> first candidate name
-        seen_emails  = {}
-        seen_phones  = {}
+        seen_emails = {}
+        seen_phones = {}
+        state_lock = threading.Lock()
+        completed_count = [0]  # mutable for closure
 
         yield sse_event({"type": "start", "total": total})
 
-        for i, payload in enumerate(file_payloads):
-            filename  = payload["filename"]
-            completed = i + 1
+        # ── Phase 1: extract text from all files in parallel ──────────────────
+        text_results = {}
 
+        def extract_text_task(payload):
+            fn = payload["filename"]
             if payload["error"]:
-                logger.warning("[%d/%d] Skipping '%s': %s", completed, total, filename, payload["error"])
-                errors.append({"file": filename, "error": payload["error"]})
-                yield sse_event({
-                    "type": "progress", "filename": filename, "ok": False,
-                    "error": payload["error"], "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90)
-                })
-                continue
+                return fn, None, None, payload["error"]
+            try:
+                text, url_overrides = extract_text_from_file(payload["content"], fn)
+                if not text or len(text.strip()) < 50:
+                    return fn, None, None, "Could not extract readable text from file"
+                return fn, text, url_overrides, None
+            except Exception as e:
+                return fn, None, None, str(e)
+
+        logger.info("Phase 1: extracting text from %d files (up to %d in parallel)", total, MAX_CONCURRENT_EXTRACT)
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_EXTRACT) as executor:
+            futures = {executor.submit(extract_text_task, p): p for p in file_payloads}
+            for future in as_completed(futures):
+                fn, text, url_overrides, err = future.result()
+                text_results[fn] = (text, url_overrides, err)
+
+        # ── Phase 2: AI extraction — ALL files in parallel ────────────────────
+        logger.info("Phase 2: AI extraction for %d files (%d concurrent, provider: %s)",
+                    total, MAX_CONCURRENT_AI, PRIMARY_PROVIDER)
+
+        # Queue of SSE events to stream (thread-safe)
+        event_queue = []
+        event_lock = threading.Lock()
+
+        def process_one(payload):
+            filename = payload["filename"]
+            text, url_overrides, text_err = text_results.get(filename, (None, None, "Text extraction missing"))
+
+            with state_lock:
+                completed_count[0] += 1
+                completed = completed_count[0]
+
+            if text_err:
+                logger.warning("[%d/%d] Skipping '%s': %s", completed, total, filename, text_err)
+                errors.append({"file": filename, "error": text_err})
+                return {"type": "progress", "filename": filename, "ok": False,
+                        "error": text_err, "completed": completed, "total": total,
+                        "pct": round((completed / total) * 90)}
 
             try:
-                logger.info("[%d/%d] Extracting '%s'", completed, total, filename)
-                data = extract_resume_data(payload["content"], filename)
-                data["filename"] = filename
+                data = extract_single_resume(filename, text, url_overrides, job_description)
 
-                # ── Duplicate detection ───────────────────────────────────────
+                # Duplicate detection (needs lock since parallel)
                 dup_of = None
                 email_key = (data.get("email") or "").lower().strip()
                 phone_key  = re.sub(r'\D', '', data.get("phone") or "")
 
-                if email_key and email_key in seen_emails:
-                    dup_of = seen_emails[email_key]
-                elif phone_key and len(phone_key) >= 7 and phone_key in seen_phones:
-                    dup_of = seen_phones[phone_key]
+                with state_lock:
+                    if email_key and email_key in seen_emails:
+                        dup_of = seen_emails[email_key]
+                    elif phone_key and len(phone_key) >= 7 and phone_key in seen_phones:
+                        dup_of = seen_phones[phone_key]
 
-                if dup_of:
-                    data["duplicate_of"] = dup_of
-                    logger.info("'%s' flagged as duplicate of '%s'", filename, dup_of)
-                else:
-                    candidate_label = data.get("full_name") or filename
-                    if email_key:
-                        seen_emails[email_key] = candidate_label
-                    if phone_key and len(phone_key) >= 7:
-                        seen_phones[phone_key] = candidate_label
+                    if dup_of:
+                        data["duplicate_of"] = dup_of
+                    else:
+                        candidate_label = data.get("full_name") or filename
+                        if email_key:
+                            seen_emails[email_key] = candidate_label
+                        if phone_key and len(phone_key) >= 7:
+                            seen_phones[phone_key] = candidate_label
 
-                # ── Job match scoring (only if JD provided) ───────────────────
-                if job_description and not dup_of:
-                    try:
-                        score, reason = score_resume_against_jd(data, job_description)
-                        if score is not None:
-                            data["match_score"] = str(score)
-                            data["match_reason"] = reason or ""
-                            logger.info("'%s' — match score: %s/100", filename, score)
-                    except Exception as score_err:
-                        logger.warning("Scoring skipped for '%s': %s", filename, score_err)
+                    results.append(data)
 
-                results.append(data)
-                logger.info("[%d/%d] '%s' — OK", completed, total, filename)
-                yield sse_event({
-                    "type": "progress", "filename": filename, "ok": True,
-                    "error": None, "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90),
-                    "data": data
-                })
+                return {"type": "progress", "filename": filename, "ok": True,
+                        "error": None, "completed": completed, "total": total,
+                        "pct": round((completed / total) * 90), "data": data}
+
             except Exception as e:
                 logger.error("[%d/%d] '%s' — FAILED: %s", completed, total, filename, e, exc_info=True)
-                errors.append({"file": filename, "error": str(e)})
-                yield sse_event({
-                    "type": "progress", "filename": filename, "ok": False,
-                    "error": str(e), "completed": completed,
-                    "total": total, "pct": round((completed / total) * 90)
-                })
+                with state_lock:
+                    errors.append({"file": filename, "error": str(e)})
+                return {"type": "progress", "filename": filename, "ok": False,
+                        "error": str(e), "completed": completed, "total": total,
+                        "pct": round((completed / total) * 90)}
 
-            # Small pause between files
-            if i < total - 1:
-                time.sleep(0.3)
+        # Run all AI extractions in parallel, yield SSE as each completes
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_AI) as executor:
+            future_to_payload = {executor.submit(process_one, p): p for p in file_payloads}
+            for future in as_completed(future_to_payload):
+                try:
+                    event = future.result()
+                    yield sse_event(event)
+                except Exception as e:
+                    payload = future_to_payload[future]
+                    logger.error("Unexpected error for '%s': %s", payload["filename"], e)
+                    yield sse_event({"type": "progress", "filename": payload["filename"],
+                                     "ok": False, "error": str(e),
+                                     "completed": total, "total": total, "pct": 90})
 
         batch_elapsed = time.monotonic() - batch_start
+        logger.info("Batch complete in %.2fs — %d/%d succeeded, %d error(s)",
+                    batch_elapsed, len(results), total, len(errors))
 
         if results:
             try:
                 _, excel_bytes = create_excel(results)
                 excel_b64 = base64.b64encode(excel_bytes).decode("utf-8")
-                logger.info(
-                    "Batch complete in %.2fs — %d/%d succeeded, %d error(s)",
-                    batch_elapsed, len(results), total, len(errors)
-                )
                 yield sse_event({
                     "type": "done", "success": True,
                     "processed": len(results), "errors": errors,
                     "download_url": "/download", "pct": 100,
-                    "results": results,
-                    "excel_b64": excel_b64
+                    "results": results, "excel_b64": excel_b64
                 })
             except Exception as e:
                 logger.error("Excel generation failed: %s", e, exc_info=True)
@@ -885,7 +1092,6 @@ def extract():
                     "processed": 0, "errors": errors, "pct": 0
                 })
         else:
-            logger.error("Batch complete — no resumes could be processed (%d error(s))", len(errors))
             yield sse_event({
                 "type": "done", "success": False,
                 "error": "No resumes could be processed",
@@ -903,9 +1109,7 @@ def extract():
 def download():
     excel_path = os.path.join(UPLOAD_FOLDER, "extracted_resumes.xlsx")
     if not os.path.exists(excel_path):
-        logger.warning("GET /download — no Excel file found at %s", excel_path)
         return jsonify({"error": "No file to download"}), 404
-    logger.info("GET /download — serving extracted_resumes.xlsx")
     return send_file(
         excel_path, as_attachment=True,
         download_name="extracted_resumes.xlsx",
@@ -921,7 +1125,6 @@ WA_SERVICE_URL = os.environ.get("WA_SERVICE_URL", "http://localhost:3001")
 
 
 def _wa_request(method, path, body=None):
-    """Simple wrapper to call the Node WhatsApp service."""
     url = f"{WA_SERVICE_URL}{path}"
     data = json.dumps(body).encode() if body else None
     headers = {"Content-Type": "application/json"}
