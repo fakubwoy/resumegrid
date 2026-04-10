@@ -994,12 +994,132 @@ def _gdrive_direct_url(url):
     return url
 
 
+def _is_gdrive_folder(url):
+    """Return True if the URL points to a Google Drive folder."""
+    return bool(re.search(r"drive\.google\.com/drive/folders/", url))
+
+
+def _gdrive_folder_id(url):
+    """Extract the folder ID from a Google Drive folder URL."""
+    m = re.search(r"/folders/([a-zA-Z0-9_-]{20,})", url)
+    return m.group(1) if m else None
+
+
+def _find_resume_in_gdrive_folder(folder_id, timeout=12):
+    """
+    Use the Google Drive file-listing page (no API key needed for public folders)
+    to find the first PDF or DOCX file inside a shared folder.
+
+    Strategy: fetch the folder's HTML page, scrape out file IDs that appear
+    in the page source, then check each one until we find a PDF/DOCX.
+
+    Returns a direct-download URL string, or None if nothing found.
+    """
+    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        req = _gdrive_req.Request(folder_url, headers=headers)
+        with _gdrive_req.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        logger.warning("Could not fetch folder page %s: %s", folder_id, exc)
+        return None
+
+    # Google Drive embeds file metadata as JSON inside the HTML.
+    # File IDs appear in patterns like "\/d\/FILE_ID\/" or as 33-char alphanum strings.
+    # We collect all candidate IDs and probe each one.
+    candidate_ids = []
+
+    # Pattern 1: explicit /d/FILE_ID/ references in the HTML source
+    for m in re.finditer(r'["\\/]d["\\/]([a-zA-Z0-9_-]{25,})["\\/]', html):
+        fid = m.group(1)
+        if fid not in candidate_ids and fid != folder_id:
+            candidate_ids.append(fid)
+
+    # Pattern 2: standalone 33-char IDs (Drive file IDs are typically 33 chars)
+    for m in re.finditer(r'\b([a-zA-Z0-9_-]{33})\b', html):
+        fid = m.group(1)
+        if fid not in candidate_ids and fid != folder_id:
+            candidate_ids.append(fid)
+
+    if not candidate_ids:
+        logger.info("No file IDs found in folder %s HTML", folder_id)
+        return None
+
+    logger.info("Found %d candidate file IDs in folder %s — probing for PDF/DOCX",
+                len(candidate_ids), folder_id)
+
+    # Probe each candidate: HEAD request to check Content-Type cheaply
+    for fid in candidate_ids[:15]:  # limit probing to first 15 to stay fast
+        probe_url = f"https://drive.google.com/uc?export=download&id={fid}"
+        try:
+            probe_req = _gdrive_req.Request(probe_url, headers=headers, method="HEAD")
+            with _gdrive_req.urlopen(probe_req, timeout=6) as probe_resp:
+                ct = probe_resp.headers.get("Content-Type", "").lower()
+                cl = int(probe_resp.headers.get("Content-Length", "0") or "0")
+
+            # Accept PDF or DOCX of reasonable size (> 5 KB)
+            if cl > 5000 and ("pdf" in ct or "word" in ct or "docx" in ct or "zip" in ct):
+                logger.info("Found resume file in folder %s → file ID %s (type: %s, size: %d)",
+                            folder_id, fid, ct, cl)
+                return probe_url
+
+        except Exception:
+            continue  # not accessible / not a file, skip
+
+    # Fallback: try GET on first few IDs and check magic bytes
+    for fid in candidate_ids[:8]:
+        download_url = f"https://drive.google.com/uc?export=download&id={fid}"
+        try:
+            get_req = _gdrive_req.Request(download_url, headers=headers)
+            with _gdrive_req.urlopen(get_req, timeout=8) as get_resp:
+                ct = get_resp.headers.get("Content-Type", "").lower()
+                chunk = get_resp.read(16)  # just the magic bytes
+
+            if chunk[:4] == b"%PDF" or chunk[:2] == b"PK":
+                logger.info("Found resume via magic bytes in folder %s → file ID %s", folder_id, fid)
+                return download_url
+
+        except Exception:
+            continue
+
+    logger.info("No PDF/DOCX found inside folder %s after probing", folder_id)
+    return None
+
+
 def _fetch_resume_text(url, timeout=12):
     """
     Fetch a Google Drive resume link and extract its text.
     Supports PDF, DOCX, and falls back to HTML scrape.
+
+    If the URL is a Google Drive FOLDER link, crawls the folder to find
+    the first PDF or DOCX file inside it, then extracts that.
+
     Returns extracted text string (empty on failure).
     """
+    # ── Folder handling ───────────────────────────────────────────────────────
+    if _is_gdrive_folder(url):
+        folder_id = _gdrive_folder_id(url)
+        if folder_id:
+            logger.info("Drive folder detected (%s) — crawling for PDF/DOCX", folder_id)
+            file_url = _find_resume_in_gdrive_folder(folder_id, timeout=timeout)
+            if file_url:
+                # Recurse with the actual file URL (not a folder, safe from infinite loop)
+                return _fetch_resume_text(file_url, timeout=timeout)
+            else:
+                logger.warning("No resume file found in Drive folder %s", folder_id)
+                return ""
+
+    # ── Normal file / direct URL handling ────────────────────────────────────
     direct = _gdrive_direct_url(url)
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ResumeGrid/3.0)", "Accept": "*/*"}
     try:
