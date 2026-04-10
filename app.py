@@ -1012,7 +1012,7 @@ def _fetch_resume_text(url, timeout=12):
         if "pdf" in content_type or raw[:4] == b"%PDF":
             import io
             with pdfplumber.open(io.BytesIO(raw)) as pdf:
-                parts = [p.extract_text() for p in pdf.pages[:6] if p.extract_text()]
+                parts = [p.extract_text() for p in pdf.pages[:8] if p.extract_text()]
             return "\n".join(parts).strip()
 
         # DOCX (PK magic bytes = zip = docx)
@@ -1024,7 +1024,7 @@ def _fetch_resume_text(url, timeout=12):
         html = raw.decode("utf-8", errors="replace")
         clean = re.sub(r"<[^>]+>", " ", html)
         clean = re.sub(r"\s+", " ", clean).strip()
-        return clean[:4000]
+        return clean[:6000]
 
     except Exception as exc:
         logger.warning("Resume fetch failed for %s: %s", url[:80], exc)

@@ -600,7 +600,14 @@ const FIELD_MAP = {
   'role': 'roles_raw',
   // Why Alfaleus
   'why do you want to work at alfaleus specifically? no chatgpt :) describe one project where you built/executed something end-to-end': 'why_alfaleus',
+  'why do you want to work at alfaleus specifically? no chatgpt :)': 'why_alfaleus',
+  'why do you want to work at alfaleus': 'why_alfaleus',
   'why alfaleus': 'why_alfaleus',
+  // Project description (separate column in some form versions)
+  'describe one project where you built/executed something end-to-end': 'project_description',
+  'describe one project': 'project_description',
+  'project description': 'project_description',
+  'end-to-end project': 'project_description',
   // LinkedIn
   'linkedin profile': 'linkedin', 'linkedin': 'linkedin',
   // Resume
@@ -895,6 +902,14 @@ function postProcess(c) {
   c.score = null;
   c.score_reason = '';
   c.rank = null;
+
+  // Merge project_description into why_alfaleus if it arrived as a separate column
+  // (Some Google Form exports split "Why Alfaleus" and "Describe a project" into two cols)
+  if (c.project_description && !c.why_alfaleus) {
+    c.why_alfaleus = c.project_description;
+  } else if (c.project_description && c.why_alfaleus && !c.why_alfaleus.includes(c.project_description)) {
+    // Keep both, but store project_description separately for the scoring prompt
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1225,7 +1240,8 @@ function openDrawer(c) {
 
     <div class="drawer-section">
       <div class="drawer-section-title">Why Alfaleus &amp; Project</div>
-      <div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.why_alfaleus||'—')}</div>
+      <div class="drawer-field"><div class="drawer-field-label">Why Alfaleus</div><div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.why_alfaleus||'—')}</div></div>
+      ${c.project_description ? `<div class="drawer-field"><div class="drawer-field-label">End-to-End Project</div><div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.project_description)}</div></div>` : ''}
     </div>
 
     <div class="drawer-section">
@@ -1430,7 +1446,7 @@ async function fetchResumesInBatches(candidates, totalCount) {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ url: c.resume }),
-          signal: AbortSignal.timeout(15000)
+          signal: AbortSignal.timeout(20000)  // bumped from 15s — larger docs need more time
         });
         if (res.ok) {
           const data = await res.json();
@@ -1456,35 +1472,95 @@ async function aiRankInBatches(candidates, jd, totalCount) {
 
     // Build candidate summaries for the batch
     const summaries = batch.map((c, idx) => {
-      const fields = [
+      const lines = [
         `ID: ${idx}`,
         `Name: ${c.full_name || 'Unknown'}`,
         `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
-        `College: ${c.college || '?'}`,
-        `Degree: ${c.degree || '?'}, Year: ${c.year || '?'}`,
-        `Duration Available: ${c.duration || '?'}`,
-        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes' : 'No'}`,
-        `Why Alfaleus: ${(c.why_alfaleus||'').slice(0, 300)}`,
-        `Achievements: ${(c.achievements||'').slice(0, 200)}`,
-        c.resume_text ? `Resume Content:\n${c.resume_text.slice(0, 800)}` : '(No resume fetched — rank on form data only)'
+        `College: ${c.college || '?'} | Degree: ${c.degree || '?'} | Current Year: ${c.year || '?'}`,
+        `Available Duration: ${c.duration || '?'} | Can Start: ${c.start_date || '?'}`,
+        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes ✓' : 'No'}`,
+        `Other Commitments: ${c.commitments || 'None mentioned'}`,
+        `Location: ${c.location || '?'}`,
       ];
-      return fields.join('\n');
+
+      // Why Alfaleus — full text, not truncated
+      if (c.why_alfaleus) {
+        lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
+      }
+
+      // Project description — separate field if available, else from why_alfaleus won't duplicate
+      if (c.project_description) {
+        lines.push(`End-to-End Project Described:\n${c.project_description.slice(0, 500)}`);
+      }
+
+      // Achievements
+      if (c.achievements) {
+        lines.push(`Achievements & Awards: ${c.achievements.slice(0, 400)}`);
+      }
+
+      // Additional notes
+      if (c.notes) {
+        lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
+      }
+
+      // Resume — significantly more text for fair evaluation
+      if (c.resume_text) {
+        lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
+      } else {
+        lines.push(`(No resume text available — evaluating on form data only)`);
+      }
+
+      return lines.join('\n');
     }).join('\n\n---CANDIDATE---\n\n');
 
-    const prompt = `You are a senior technical recruiter at Alfaleus, a deep-tech startup.
+    const prompt = `You are a senior technical recruiter at Alfaleus, a deep-tech startup in Hyderabad.
 
 JOB DESCRIPTION:
 ${jd}
 
-Rate each candidate 0-100 for fit against the job description above.
+Rate each candidate 0–100 for fit against the job description above.
 
-IMPORTANT SCORING RULES:
-- If a candidate applied for a DIFFERENT role than what the JD describes, give a maximum score of 20. Note the role mismatch in your reason.
-- Candidates who applied for a MATCHING role should be scored 0-100 based on actual fit.
-- Score based on: technical skills match, project relevance, availability (in-person Hyderabad preferred), year of study, motivation in why-alfaleus response, resume quality.
+═══════════════════════════════════════
+SCORING FRAMEWORK (total 100 points):
+═══════════════════════════════════════
+
+1. ROLE ALIGNMENT (25 pts)
+   - Did the candidate apply for a role that matches this JD?
+   - If they applied for a COMPLETELY DIFFERENT role (e.g. developer vs sales), cap total score at 20 and note mismatch.
+   - Partial overlap gets partial credit.
+
+2. TECHNICAL SKILLS & EXPERIENCE (30 pts)
+   - From resume: relevant skills, tools, tech stack, past roles
+   - Quality and depth of projects built — especially end-to-end ownership
+   - Real-world experience vs purely academic exposure
+
+3. PROJECT & ACHIEVEMENT QUALITY (20 pts)
+   - Did they describe building something real end-to-end?
+   - Specificity matters — vague answers score lower, concrete details score higher
+   - Awards, publications, leadership, notable accomplishments
+
+4. MOTIVATION & COMMUNICATION QUALITY (15 pts)
+   - "Why Alfaleus" response: is it thoughtful and specific, or generic?
+   - Generic/ChatGPT-sounding answers score 3–5. Genuine, specific answers score 10–15.
+   - Written communication quality as a signal of professionalism.
+
+5. AVAILABILITY & LOGISTICS FIT (10 pts)
+   - Hyderabad in-person availability preferred (+5 if yes)
+   - Duration available — longer commitments preferred for most roles
+   - No major conflicting commitments during the internship period
+
+═══════════════════════════════════════
+FAIRNESS RULES:
+═══════════════════════════════════════
+- Score ONLY on merit — ignore gender, home town, college prestige bias
+- A candidate without a resume but with a strong project description + why_alfaleus CAN score 60+
+- A candidate WITH a resume but a weak/vague why_alfaleus should NOT get full motivation points
+- If resume text is unavailable, judge fairly on form data alone — clearly note this in reason
+- Do NOT penalise candidates just for being a fresher — judge quality of what they've built
+- Candidates from less-known colleges with strong projects should score the same as IIT/NIT candidates with weak ones
 
 Return ONLY a JSON array, no other text:
-[{"id":0,"score":72,"reason":"2 sentence reason"}]
+[{"id":0,"score":72,"reason":"2 sentence reason covering top strengths and key gaps"}]
 
 CANDIDATES:
 ---CANDIDATE---
