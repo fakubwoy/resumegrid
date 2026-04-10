@@ -1165,6 +1165,169 @@ Rules:
         logger.error("match-roles error: %s", e, exc_info=True)
         return jsonify({"matched_indices": [], "reasoning": f"AI error: {e}"}), 500
 
+@app.route("/api/download-ranked-excel", methods=["POST"])
+def api_download_ranked_excel():
+    """
+    POST {"candidates": [...], "jd_title": "optional title"}
+    Accepts a JSON array of ranked candidate objects (with score + score_reason)
+    and returns a formatted .xlsx file as a download.
+
+    The candidates array should be the full candidate objects as stored in the
+    frontend (allCandidates after ranking), already sorted by score descending.
+    Only candidates that have been scored (score != null) are included.
+    """
+    body = request.get_json(silent=True) or {}
+    candidates = body.get("candidates") or []
+    jd_title   = str(body.get("jd_title") or "Ranked").strip()[:60]
+
+    if not candidates:
+        return jsonify({"error": "No candidates provided"}), 400
+
+    # Filter to only scored candidates and sort by score desc
+    scored = [c for c in candidates if c.get("score") is not None]
+    scored.sort(key=lambda c: int(c.get("score") or 0), reverse=True)
+
+    if not scored:
+        return jsonify({"error": "No ranked candidates found"}), 400
+
+    logger.info("Generating ranked Excel: %d candidates, JD: %s", len(scored), jd_title)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ranked Candidates"
+
+    # ── Styles ────────────────────────────────────────────────────────────────
+    hdr_font   = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+    hdr_fill   = PatternFill("solid", start_color="1A3A5C")
+    hdr_align  = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell_font  = Font(name="Arial", size=9)
+    cell_align = Alignment(vertical="top", wrap_text=True)
+    alt_fill   = PatternFill("solid", start_color="EBF2FA")
+    thin       = Border(
+        left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin', color='CCCCCC'),  bottom=Side(style='thin', color='CCCCCC')
+    )
+
+    # ── Column definitions ────────────────────────────────────────────────────
+    COLS = [
+        ("rank",          "Rank",               8),
+        ("score",         "Score (/100)",        10),
+        ("score_reason",  "Score Reason",        45),
+        ("full_name",     "Full Name",           22),
+        ("email",         "Email",               28),
+        ("phone",         "Phone",               16),
+        ("roles",         "Role(s) Applied",     28),
+        ("college",       "College",             28),
+        ("degree",        "Degree",              18),
+        ("year",          "Year",                10),
+        ("duration",      "Duration Available",  18),
+        ("start_date",    "Can Start",           15),
+        ("location",      "Location",            18),
+        ("hyderabad",     "HYD In-Person",       14),
+        ("gender",        "Gender",              12),
+        ("linkedin",      "LinkedIn",            35),
+        ("resume",        "Resume Link",         35),
+        ("achievements",  "Achievements",        40),
+        ("why_alfaleus",  "Why Alfaleus",        45),
+        ("timestamp",     "Submitted",           18),
+    ]
+
+    # ── Header row ────────────────────────────────────────────────────────────
+    for col_idx, (_, label, width) in enumerate(COLS, 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.value = label
+        cell.font  = hdr_font
+        cell.fill  = hdr_fill
+        cell.alignment = hdr_align
+        cell.border    = thin
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.row_dimensions[1].height = 30
+
+    # ── Data rows ─────────────────────────────────────────────────────────────
+    for row_idx, cand in enumerate(scored, 2):
+        rank = row_idx - 1
+        score_val = cand.get("score")
+
+        for col_idx, (key, _, _) in enumerate(COLS, 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+
+            if key == "rank":
+                cell.value = rank
+                cell.font  = Font(name="Arial", size=9, bold=True)
+
+            elif key == "score":
+                try:
+                    sv = int(score_val)
+                    cell.value = sv
+                    if sv >= 75:
+                        cell.fill = PatternFill("solid", start_color="C6EFCE")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="276221")
+                    elif sv >= 50:
+                        cell.fill = PatternFill("solid", start_color="FFEB9C")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="9C6500")
+                    else:
+                        cell.fill = PatternFill("solid", start_color="FFC7CE")
+                        cell.font = Font(name="Arial", size=9, bold=True, color="9C0006")
+                except (ValueError, TypeError):
+                    cell.value = score_val
+                    cell.font  = cell_font
+
+            elif key == "roles":
+                roles = cand.get("roles") or []
+                cell.value = ", ".join(roles) if isinstance(roles, list) else str(roles or "")
+                cell.font  = cell_font
+
+            elif key == "hyderabad":
+                hyd = cand.get("hyderabad_bool") or cand.get("hyderabad") or ""
+                if hyd is True or str(hyd).lower() in ("yes", "true", "1"):
+                    cell.value = "Yes"
+                    cell.fill  = PatternFill("solid", start_color="C6EFCE")
+                    cell.font  = Font(name="Arial", size=9, color="276221")
+                else:
+                    cell.value = "No"
+                    cell.font  = cell_font
+
+            elif key in ("linkedin", "resume"):
+                url = str(cand.get(key) or "").strip()
+                if url.startswith("http"):
+                    cell.value     = url
+                    cell.hyperlink = url
+                    cell.font = Font(name="Arial", size=9, color="0563C1", underline="single")
+                else:
+                    cell.value = url
+                    cell.font  = cell_font
+
+            else:
+                val = cand.get(key) or ""
+                cell.value = str(val) if val else ""
+                cell.font  = cell_font
+
+            cell.alignment = cell_align
+            cell.border    = thin
+            if row_idx % 2 == 0 and key not in ("score", "hyderabad", "linkedin", "resume", "rank"):
+                try:
+                    if cell.fill.fill_type == "none" or cell.fill.start_color.rgb in ("00000000", "FFFFFFFF"):
+                        cell.fill = alt_fill
+                except Exception:
+                    pass
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(COLS))}1"
+
+    # ── Save & return ─────────────────────────────────────────────────────────
+    safe_title  = re.sub(r'[^\w\s-]', '', jd_title).strip().replace(' ', '_')
+    filename    = f"ranked_{safe_title}_{len(scored)}_candidates.xlsx"
+    output_path = os.path.join(UPLOAD_FOLDER, filename)
+    wb.save(output_path)
+    logger.info("Ranked Excel saved: %s (%d rows)", filename, len(scored))
+
+    return send_file(
+        output_path, as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
 # ── WhatsApp proxy routes (lazy Node process management) ──────────────────────
 #
 #  The Node/Chromium service is NOT started at container boot.

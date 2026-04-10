@@ -459,6 +459,10 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Export CSV
       </button>
+      <button class="export-btn" id="downloadRankedBtn" onclick="downloadRankedExcel()" style="display:none;background:rgba(139,92,246,0.12);border-color:rgba(139,92,246,0.35);color:var(--purple)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 18v-6"/><polyline points="9 15 12 18 15 15"/></svg>
+        <span id="downloadRankedLabel">Download Ranked Excel</span>
+      </button>
       <span class="page-info" id="pageInfo">0 candidates</span>
     </div>
 
@@ -1341,7 +1345,14 @@ async function startRanking() {
   document.getElementById('sortField').value = 'score_desc';
   applyFilters();
   updateStats();
-  showToast(`Ranking complete!`, 'success');
+
+  // Show the ranked Excel download button with candidate count
+  const rankedCount = allCandidates.filter(c => c.score !== null).length;
+  const dlBtn = document.getElementById('downloadRankedBtn');
+  document.getElementById('downloadRankedLabel').textContent = `Download Ranked Excel (${rankedCount})`;
+  dlBtn.style.display = '';
+
+  showToast(`Ranking complete! ${rankedCount} candidates ranked.`, 'success');
 }
 
 function setRankingUI(active) {
@@ -1490,9 +1501,64 @@ function clearRanking() {
   allCandidates.forEach(c => { c.score = null; c.score_reason = ''; c.resume_text = null; });
   rankingActive = false;
   document.getElementById('sortField').value = '';
+  document.getElementById('downloadRankedBtn').style.display = 'none';
   applyFilters();
   updateStats();
   showToast('Ranking cleared', 'info');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Download Ranked Excel
+// ─────────────────────────────────────────────────────────────────────────────
+async function downloadRankedExcel() {
+  const rankedCandidates = allCandidates.filter(c => c.score !== null);
+  if (rankedCandidates.length === 0) {
+    showToast('No ranked candidates to export', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('downloadRankedBtn');
+  const lbl = document.getElementById('downloadRankedLabel');
+  btn.disabled = true;
+  lbl.textContent = 'Generating...';
+
+  // Use the JD textarea content as the title (first 60 chars, first line)
+  const jdRaw = (document.getElementById('jdArea').value || '').trim();
+  const jdTitle = jdRaw.split('\n')[0].slice(0, 60) || 'Ranked';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/download-ranked-excel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidates: rankedCandidates, jd_title: jdTitle }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Server error ${res.status}`);
+    }
+
+    // Trigger browser download from the blob response
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const nameMatch = disposition.match(/filename="?([^"]+)"?/);
+    const filename = nameMatch ? nameMatch[1] : `ranked_candidates.xlsx`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showToast(`Downloaded ${rankedCandidates.length} ranked candidates`, 'success');
+  } catch(e) {
+    showToast(`Export failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    lbl.textContent = 'Download Ranked Excel';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
