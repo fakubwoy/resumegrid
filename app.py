@@ -1007,13 +1007,7 @@ def _gdrive_folder_id(url):
 
 def _find_resume_in_gdrive_folder(folder_id, timeout=12):
     """
-    Use the Google Drive file-listing page (no API key needed for public folders)
-    to find the first PDF or DOCX file inside a shared folder.
-
-    Strategy: fetch the folder's HTML page, scrape out file IDs that appear
-    in the page source, then check each one until we find a PDF/DOCX.
-
-    Returns a direct-download URL string, or None if nothing found.
+    Optimized: parallel probing of candidate file IDs to speed up folder crawling.
     """
     folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
     headers = {
@@ -1034,18 +1028,12 @@ def _find_resume_in_gdrive_folder(folder_id, timeout=12):
         logger.warning("Could not fetch folder page %s: %s", folder_id, exc)
         return None
 
-    # Google Drive embeds file metadata as JSON inside the HTML.
-    # File IDs appear in patterns like "\/d\/FILE_ID\/" or as 33-char alphanum strings.
-    # We collect all candidate IDs and probe each one.
+    # Extract candidate file IDs
     candidate_ids = []
-
-    # Pattern 1: explicit /d/FILE_ID/ references in the HTML source
     for m in re.finditer(r'["\\/]d["\\/]([a-zA-Z0-9_-]{25,})["\\/]', html):
         fid = m.group(1)
         if fid not in candidate_ids and fid != folder_id:
             candidate_ids.append(fid)
-
-    # Pattern 2: standalone 33-char IDs (Drive file IDs are typically 33 chars)
     for m in re.finditer(r'\b([a-zA-Z0-9_-]{33})\b', html):
         fid = m.group(1)
         if fid not in candidate_ids and fid != folder_id:
@@ -1055,42 +1043,51 @@ def _find_resume_in_gdrive_folder(folder_id, timeout=12):
         logger.info("No file IDs found in folder %s HTML", folder_id)
         return None
 
-    logger.info("Found %d candidate file IDs in folder %s — probing for PDF/DOCX",
+    logger.info("Found %d candidate file IDs in folder %s — parallel probing for PDF/DOCX",
                 len(candidate_ids), folder_id)
 
-    # Probe each candidate: HEAD request to check Content-Type cheaply
-    for fid in candidate_ids[:15]:  # limit probing to first 15 to stay fast
+    # Limit to first 15 IDs to keep reasonable
+    ids_to_probe = candidate_ids[:15]
+
+    def probe_file_id(fid):
+        """Check if a file ID is a PDF or DOCX resume."""
         probe_url = f"https://drive.google.com/uc?export=download&id={fid}"
         try:
-            probe_req = _gdrive_req.Request(probe_url, headers=headers, method="HEAD")
-            with _gdrive_req.urlopen(probe_req, timeout=6) as probe_resp:
-                ct = probe_resp.headers.get("Content-Type", "").lower()
-                cl = int(probe_resp.headers.get("Content-Length", "0") or "0")
-
-            # Accept PDF or DOCX of reasonable size (> 5 KB)
+            # Try HEAD first (lightweight)
+            head_req = _gdrive_req.Request(probe_url, headers=headers, method="HEAD")
+            with _gdrive_req.urlopen(head_req, timeout=5) as resp:
+                ct = resp.headers.get("Content-Type", "").lower()
+                cl = int(resp.headers.get("Content-Length", "0") or "0")
             if cl > 5000 and ("pdf" in ct or "word" in ct or "docx" in ct or "zip" in ct):
-                logger.info("Found resume file in folder %s → file ID %s (type: %s, size: %d)",
-                            folder_id, fid, ct, cl)
-                return probe_url
-
+                return fid, probe_url
         except Exception:
-            continue  # not accessible / not a file, skip
+            pass
 
-    # Fallback: try GET on first few IDs and check magic bytes
-    for fid in candidate_ids[:8]:
-        download_url = f"https://drive.google.com/uc?export=download&id={fid}"
+        # Fallback: GET and check magic bytes
         try:
-            get_req = _gdrive_req.Request(download_url, headers=headers)
-            with _gdrive_req.urlopen(get_req, timeout=8) as get_resp:
-                ct = get_resp.headers.get("Content-Type", "").lower()
-                chunk = get_resp.read(16)  # just the magic bytes
-
+            get_req = _gdrive_req.Request(probe_url, headers=headers)
+            with _gdrive_req.urlopen(get_req, timeout=6) as resp:
+                ct = resp.headers.get("Content-Type", "").lower()
+                chunk = resp.read(16)
             if chunk[:4] == b"%PDF" or chunk[:2] == b"PK":
-                logger.info("Found resume via magic bytes in folder %s → file ID %s", folder_id, fid)
-                return download_url
-
+                return fid, probe_url
         except Exception:
-            continue
+            pass
+
+        return None
+
+    # Parallel probing — use 5 concurrent workers (adjustable)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(probe_file_id, fid): fid for fid in ids_to_probe}
+        for future in as_completed(futures):
+            res = future.result()
+            if res is not None:
+                fid, url = res
+                logger.info("Found resume file in folder %s → file ID %s", folder_id, fid)
+                # Cancel remaining tasks to save resources
+                for f in futures:
+                    f.cancel()
+                return url
 
     logger.info("No PDF/DOCX found inside folder %s after probing", folder_id)
     return None
