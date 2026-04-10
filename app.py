@@ -44,224 +44,77 @@ logging.getLogger("pypdf").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-# ── Provider configuration ─────────────────────────────────────────────────────
-#
-# Priority order:
-#   1. Gemini (GEMINI_API_KEY) — fast, accurate, highly parallelizable (paid tier)
-#   2. Groq   (GROQ_API_KEY)   — fast, good for bulk, free tier rate-limited
-#   3. Ollama (local)           — slowest, serialized, GPU-bound
-#
-# Set MAX_CONCURRENT_AI to control parallel AI calls.
-# Gemini paid tier can handle 20-50 concurrent calls easily.
-# Groq free tier: keep at 5-10 to avoid rate limits.
-# Ollama: forced to 1 (GPU serialized).
+# ── Provider configuration — Gemini only ──────────────────────────────────────
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "mistral-nemo")
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
-# Gemini model — gemini-2.0-flash is best for speed + accuracy at paid tier
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-GROQ_MODEL   = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-
-# Determine primary provider and concurrency
-if GEMINI_API_KEY:
-    PRIMARY_PROVIDER = "gemini"
-    # Paid tier: very high concurrency. Adjust down if you hit quota errors.
-    MAX_CONCURRENT_AI = int(os.environ.get("MAX_CONCURRENT_AI", "20"))
-elif GROQ_API_KEY:
-    PRIMARY_PROVIDER = "groq"
-    MAX_CONCURRENT_AI = int(os.environ.get("MAX_CONCURRENT_AI", "8"))
-else:
-    PRIMARY_PROVIDER = "ollama"
-    MAX_CONCURRENT_AI = 1  # GPU-serialized
-
+PRIMARY_PROVIDER       = "gemini"
+MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "20"))
 MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "8"))
 
 logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
-logger.info("Primary AI provider: %s | Concurrent AI calls: %d", PRIMARY_PROVIDER, MAX_CONCURRENT_AI)
+logger.info("AI provider: gemini (%s) | concurrent calls: %d", GEMINI_MODEL, MAX_CONCURRENT_AI)
 if OCR_AVAILABLE:
     logger.info("OCR support enabled (pdf2image + pytesseract)")
 else:
     logger.warning("OCR support NOT available — install pdf2image + pytesseract to enable.")
 
-if not GEMINI_API_KEY and not GROQ_API_KEY:
-    logger.warning("No cloud AI keys found — falling back to Ollama (slow). Set GEMINI_API_KEY for best performance.")
+if not GEMINI_API_KEY:
+    logger.warning("GEMINI_API_KEY not set — all AI calls will fail.")
 
 
-# ── Rate limit sentinel ───────────────────────────────────────────────────────
-
-class RateLimitError(Exception):
-    """Raised on 429 — immediately signals call_ai to fall through to next provider."""
-    pass
-
-
-# ── AI semaphore (limits concurrent cloud calls) ──────────────────────────────
+# ── AI semaphore ──────────────────────────────────────────────────────────────
 
 AI_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_AI)
 
-# ── Gemini call ────────────────────────────────────────────────────────────────
 
-def call_gemini(prompt_text, system_prompt=None):
+# ── Gemini / call_ai ─────────────────────────────────────────────────────────
+
+def call_ai(text, is_scoring=False):
     """
-    Call Gemini. On 429: raises RateLimitError immediately (no wait/retry).
-    On other errors: 1 quick retry then gives up — let call_ai handle fallback.
+    Call Gemini. Retries once on transient errors, raises on 429.
+    Returns (raw_response_str, "gemini").
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    system = (
+        "You are an expert resume parser. "
+        "Return ONLY valid JSON. No markdown, no backticks, no explanation."
+    ) if not is_scoring else (
+        "You are a technical recruiter. Return ONLY valid JSON. No markdown, no explanation."
+    )
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
     payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.0,
             "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
-        }
-    }
-    if system_prompt:
-        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
-
-    last_err = None
-    for attempt in range(2):  # max 2 attempts — fail fast
-        try:
-            with AI_SEMAPHORE:
-                resp = httpx.post(url, json=payload, timeout=30.0)
-
-            if resp.status_code == 429:
-                logger.warning("Gemini 429 — switching to next provider")
-                raise RateLimitError("Gemini 429")
-
-            resp.raise_for_status()
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        except RateLimitError:
-            raise  # never retry a rate limit — fall through immediately
-        except Exception as e:
-            last_err = e
-            if attempt == 0:
-                time.sleep(1)  # one short wait on transient error, then give up
-
-    raise RuntimeError(f"Gemini failed: {last_err}")
-
-
-# ── Groq call ──────────────────────────────────────────────────────────────────
-
-def call_groq(prompt_text, system_prompt=None):
-    """
-    Call Groq. On 429: raises RateLimitError immediately.
-    On other errors: 1 quick retry then gives up.
-    """
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt_text})
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": messages,
-        "temperature": 0.0,
-        "max_tokens": 2048,
-        "response_format": {"type": "json_object"},
-    }
-
-    last_err = None
-    for attempt in range(2):  # max 2 attempts — fail fast
-        try:
-            with AI_SEMAPHORE:
-                resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
-
-            if resp.status_code == 429:
-                logger.warning("Groq 429 — switching to next provider")
-                raise RateLimitError("Groq 429")
-
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-
-        except RateLimitError:
-            raise
-        except Exception as e:
-            last_err = e
-            if attempt == 0:
-                time.sleep(1)
-
-    raise RuntimeError(f"Groq failed: {last_err}")
-
-
-# ── Ollama call ────────────────────────────────────────────────────────────────
-
-OLLAMA_SEMAPHORE = threading.Semaphore(1)  # GPU-serialized
-
-def call_ollama(prompt_text, system_prompt=None):
-    """Call local Ollama. 2 attempts, serialized via semaphore."""
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt_text})
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": 0.0, "num_predict": 2048, "top_p": 1.0}
+        },
+        "system_instruction": {"parts": [{"text": system}]},
     }
 
     last_err = None
     for attempt in range(2):
         try:
-            with OLLAMA_SEMAPHORE:
-                resp = httpx.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=120.0)
-                resp.raise_for_status()
-                return resp.json()["message"]["content"].strip()
+            with AI_SEMAPHORE:
+                resp = httpx.post(url, json=payload, timeout=45.0)
+
+            if resp.status_code == 429:
+                raise RuntimeError("Gemini 429 — quota exceeded. Try again in a moment.")
+
+            resp.raise_for_status()
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip(), "gemini"
+
         except Exception as e:
             last_err = e
             if attempt == 0:
-                time.sleep(2)
+                time.sleep(1)
 
-    raise RuntimeError(f"Ollama failed: {last_err}")
-
-
-# ── Unified AI call with fallback chain ───────────────────────────────────────
-
-def call_ai(text, is_scoring=False):
-    """
-    Call AI with instant fallback: Gemini → Groq → Ollama.
-    - 429 (rate limit): skips to next provider immediately, no waiting.
-    - Other errors: 1 quick retry per provider, then skip.
-    - Only tries providers with keys actually configured.
-    Returns (raw_response_str, provider_name).
-    """
-    system = (
-        "You are an expert resume parser. "
-        "Extract structured data and return ONLY valid JSON. "
-        "No markdown, no backticks, no explanation whatsoever."
-    ) if not is_scoring else (
-        "You are a technical recruiter. Return ONLY valid JSON, no markdown, no explanation."
-    )
-
-    has_gemini = bool(GEMINI_API_KEY and GEMINI_API_KEY.strip())
-    has_groq   = bool(GROQ_API_KEY and GROQ_API_KEY.strip())
-
-    if has_gemini:
-        try:
-            return call_gemini(text, system_prompt=system), "gemini"
-        except RateLimitError:
-            logger.warning("Gemini rate-limited — falling through to Groq/Ollama")
-        except Exception as e:
-            logger.warning("Gemini error — falling through: %s", e)
-
-    if has_groq:
-        try:
-            return call_groq(text, system_prompt=system), "groq"
-        except RateLimitError:
-            logger.warning("Groq rate-limited — falling through to Ollama")
-        except Exception as e:
-            logger.warning("Groq error — falling through: %s", e)
-
-    # Ollama: only if no cloud keys, or all cloud providers failed
-    try:
-        return call_ollama(text, system_prompt=system), "ollama"
-    except Exception as e:
-        raise RuntimeError(f"All AI providers failed. Last error: {e}")
-
+    raise RuntimeError(f"Gemini failed: {last_err}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -680,18 +533,25 @@ Rules for experience fields:
 CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explanation."""
 
 
-def get_scoring_prompt(job_description):
+def get_scoring_prompt(job_description, applied_role=None):
+    role_instruction = ""
+    if applied_role:
+        role_instruction = f"""
+CANDIDATE'S APPLIED ROLE: {applied_role}
+
+CRITICAL: If the candidate applied for a role that is clearly different from the role described in the JD above (e.g., they applied for "Full Stack Developer" but this JD is for "Entrepreneur in Residence"), cap the score at 20 and note the mismatch in your reason. Only score 21-100 if the applied role is reasonably aligned with this JD.
+"""
     return f"""You are a technical recruiter. Score this resume against the job description below.
 
 JOB DESCRIPTION:
 {job_description[:2000]}
-
+{role_instruction}
 Score the candidate from 0 to 100 based on:
-- Skills & technology match (40 points)
+- Role alignment — is the candidate's applied role relevant to this JD? (if not, cap at 20)
+- Skills & technology match (35 points of 80 remaining)
 - Years of experience relevance (20 points)
-- Role/title alignment (20 points)
+- Role/title alignment (15 points)
 - Education & certifications (10 points)
-- Overall fit (10 points)
 
 Return ONLY a JSON object with exactly these two fields:
 {{
@@ -766,7 +626,10 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
                 if val:
                     summary_parts.append(f"{field}: {val}")
             resume_summary = "\n".join(summary_parts)
-            score_prompt = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description)}"
+            # Pass the candidate's current_title as the "applied role" so the model
+            # can detect role mismatches (e.g. a fullstack dev ranked against an EIR JD)
+            applied_role = data.get("current_title") or data.get("most_recent_role")
+            score_prompt = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description, applied_role=applied_role)}"
             score_raw, _ = call_ai(score_prompt, is_scoring=True)
             score_raw = re.sub(r"^```[a-z]*\n?", "", score_raw)
             score_raw = re.sub(r"\n?```$", "", score_raw)
@@ -900,28 +763,13 @@ def index():
 
 @app.route("/health")
 def health():
-    """Health check — reports AI provider connectivity."""
-    providers = {}
-
-    if GEMINI_API_KEY:
-        providers["gemini"] = {"configured": True, "model": GEMINI_MODEL}
-    if GROQ_API_KEY:
-        providers["groq"] = {"configured": True, "model": GROQ_MODEL}
-
-    # Quick Ollama check
-    try:
-        resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
-        if resp.status_code == 200:
-            models = [m["name"] for m in resp.json().get("models", [])]
-            providers["ollama"] = {"configured": True, "models": models}
-    except Exception:
-        providers["ollama"] = {"configured": False}
-
+    """Health check."""
     return jsonify({
         "status": "ok",
-        "primary_provider": PRIMARY_PROVIDER,
+        "provider": "gemini",
+        "model": GEMINI_MODEL,
+        "gemini_configured": bool(GEMINI_API_KEY),
         "max_concurrent_ai": MAX_CONCURRENT_AI,
-        "providers": providers,
     })
 
 
@@ -1117,6 +965,205 @@ def download():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CANDIDATE GRID — Routes for Google Form / sheet candidate review
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import urllib.parse as _urlparse
+import urllib.request as _gdrive_req
+
+
+@app.route("/candidates")
+def candidate_grid():
+    """Serve the candidate grid page."""
+    return app.send_static_file("candidate_grid.html")
+
+
+def _gdrive_direct_url(url):
+    """
+    Convert a Google Drive share link → direct download URL.
+    Handles /file/d/<ID>/view and ?id=<ID> patterns.
+    """
+    m = re.search(r"/d/([a-zA-Z0-9_-]{20,})", url)
+    if not m:
+        m = re.search(r"[?&]id=([a-zA-Z0-9_-]{20,})", url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
+
+def _fetch_resume_text(url, timeout=12):
+    """
+    Fetch a Google Drive resume link and extract its text.
+    Supports PDF, DOCX, and falls back to HTML scrape.
+    Returns extracted text string (empty on failure).
+    """
+    direct = _gdrive_direct_url(url)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ResumeGrid/3.0)", "Accept": "*/*"}
+    try:
+        req = _gdrive_req.Request(direct, headers=headers)
+        with _gdrive_req.urlopen(req, timeout=timeout) as resp:
+            content_type = resp.headers.get("Content-Type", "").lower()
+            raw = resp.read()
+
+        # PDF
+        if "pdf" in content_type or raw[:4] == b"%PDF":
+            import io
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                parts = [p.extract_text() for p in pdf.pages[:6] if p.extract_text()]
+            return "\n".join(parts).strip()
+
+        # DOCX (PK magic bytes = zip = docx)
+        if "word" in content_type or "docx" in content_type or raw[:2] == b"PK":
+            import io
+            return (docx2txt.process(io.BytesIO(raw)) or "").strip()
+
+        # HTML fallback — strip tags
+        html = raw.decode("utf-8", errors="replace")
+        clean = re.sub(r"<[^>]+>", " ", html)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        return clean[:4000]
+
+    except Exception as exc:
+        logger.warning("Resume fetch failed for %s: %s", url[:80], exc)
+        return ""
+
+
+@app.route("/api/fetch-resume", methods=["POST"])
+def api_fetch_resume():
+    """
+    POST {"url": "https://drive.google.com/..."}
+    Returns {"text": "...", "ok": true/false}
+
+    Proxies Google Drive resume downloads to avoid CORS.
+    Extracts text from PDF or DOCX automatically.
+    """
+    body = request.get_json(silent=True) or {}
+    url = (body.get("url") or "").strip()
+
+    if not url or not url.startswith("http"):
+        return jsonify({"text": "", "ok": False, "error": "invalid url"}), 400
+
+    text = _fetch_resume_text(url)
+    logger.info("Resume fetch %s → %d chars", url[:80], len(text))
+    return jsonify({"text": text, "ok": bool(text)})
+
+
+@app.route("/api/rank-candidates", methods=["POST"])
+def api_rank_candidates():
+    """
+    POST {"prompt": "...full ranking prompt with JD + candidate data..."}
+    Returns {"scores": [{"id": 0, "score": 72, "reason": "..."}, ...]}
+
+    Uses the same Gemini → Groq → Ollama fallback chain as resume extraction.
+    The frontend sends candidates in batches of 20 with their resume text included.
+    """
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get("prompt") or "").strip()
+
+    if not prompt:
+        return jsonify({"scores": [], "error": "no prompt"}), 400
+
+    try:
+        raw, provider = call_ai(prompt, is_scoring=True)
+        logger.info("Rank response from %s: %d chars", provider, len(raw))
+
+        # Strip markdown fences if present
+        clean = raw.strip()
+        clean = re.sub(r"^```[a-z]*\n?", "", clean)
+        clean = re.sub(r"\n?```$", "", clean).strip()
+
+        # Pull out JSON array
+        arr_match = re.search(r"\[.*\]", clean, re.DOTALL)
+        if arr_match:
+            clean = arr_match.group(0)
+
+        scores_raw = json.loads(clean)
+        if not isinstance(scores_raw, list):
+            raise ValueError("Expected a JSON array")
+
+        scores = []
+        for item in scores_raw:
+            if isinstance(item, dict) and "id" in item and "score" in item:
+                scores.append({
+                    "id":     int(item["id"]),
+                    "score":  max(0, min(100, int(float(item.get("score", 50))))),
+                    "reason": str(item.get("reason", ""))[:300],
+                })
+
+        return jsonify({"scores": scores, "provider": provider})
+
+    except json.JSONDecodeError as e:
+        logger.error("JSON parse error in rank response: %s | raw: %.300s", e, raw)
+        return jsonify({"scores": [], "error": f"JSON parse error: {e}"}), 500
+    except Exception as e:
+        logger.error("Ranking error: %s", e, exc_info=True)
+        return jsonify({"scores": [], "error": str(e)}), 500
+
+
+@app.route("/api/match-roles", methods=["POST"])
+def api_match_roles():
+    """
+    POST {"jd": "...", "roles": ["Role A", "Role B", ...]}
+    Returns {"matched_indices": [0, 2], "reasoning": "..."}
+
+    Uses AI to determine which candidate role buckets are relevant to the given JD.
+    Much more accurate than keyword matching — understands semantic role equivalence.
+    """
+    body = request.get_json(silent=True) or {}
+    jd    = (body.get("jd") or "").strip()
+    roles = body.get("roles") or []
+
+    if not jd or not roles:
+        return jsonify({"matched_indices": [], "reasoning": "missing jd or roles"}), 400
+
+    roles_list = "\n".join(f'{i}: "{r}"' for i, r in enumerate(roles))
+
+    prompt = f"""You are a recruiting assistant. Given a job description and a list of candidate-applied roles, identify which roles from the list are a good match for the JD.
+
+AVAILABLE ROLES (candidates selected one or more of these when applying):
+{roles_list}
+
+JOB DESCRIPTION:
+{jd[:3000]}
+
+Return ONLY a JSON object:
+{{
+  "matched_indices": [<list of integer indices>],
+  "reasoning": "<one sentence explanation>"
+}}
+
+Rules:
+- Include a role index if candidates in that role would plausibly be suitable for this JD
+- Include multiple indices if the JD genuinely spans multiple domains
+- If the JD is for an EIR / GTM / Sales role, do NOT include engineering/developer roles
+- If no role matches, return matched_indices as an empty list
+- Return ONLY valid JSON, no markdown, no explanation outside the object"""
+
+    try:
+        raw, provider = call_ai(prompt, is_scoring=True)
+        logger.info("match-roles response from %s", provider)
+
+        clean = raw.strip()
+        clean = re.sub(r"^```[a-z]*\n?", "", clean)
+        clean = re.sub(r"\n?```$", "", clean).strip()
+        obj_match = re.search(r'\{.*\}', clean, re.DOTALL)
+        if not obj_match:
+            raise ValueError("No JSON object in response")
+
+        parsed = json.loads(obj_match.group())
+        matched = [int(i) for i in (parsed.get("matched_indices") or []) if 0 <= int(i) < len(roles)]
+        return jsonify({
+            "matched_indices": matched,
+            "reasoning": str(parsed.get("reasoning", ""))[:200],
+            "provider": provider
+        })
+
+    except Exception as e:
+        logger.error("match-roles error: %s", e, exc_info=True)
+        return jsonify({"matched_indices": [], "reasoning": f"AI error: {e}"}), 500
 
 # ── WhatsApp proxy routes (lazy Node process management) ──────────────────────
 #

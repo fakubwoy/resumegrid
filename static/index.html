@@ -921,17 +921,23 @@
 
   <!-- Header -->
   <header>
-    <div class="brand">
-      <div class="brand-mark">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="2" width="9" height="1.5" rx=".75" fill="white"/>
-          <rect x="1" y="5.5" width="7" height="1.5" rx=".75" fill="white" opacity=".7"/>
-          <rect x="1" y="9" width="9" height="1.5" rx=".75" fill="white"/>
-          <rect x="1" y="12.5" width="5" height="1.5" rx=".75" fill="white" opacity=".7"/>
-          <rect x="12" y="6" width="3" height="8" rx="1.5" fill="white" opacity=".5"/>
-        </svg>
+    <div class="brand" style="justify-content:space-between;width:100%">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="brand-mark">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="2" width="9" height="1.5" rx=".75" fill="white"/>
+            <rect x="1" y="5.5" width="7" height="1.5" rx=".75" fill="white" opacity=".7"/>
+            <rect x="1" y="9" width="9" height="1.5" rx=".75" fill="white"/>
+            <rect x="1" y="12.5" width="5" height="1.5" rx=".75" fill="white" opacity=".7"/>
+            <rect x="12" y="6" width="3" height="8" rx="1.5" fill="white" opacity=".5"/>
+          </svg>
+        </div>
+        <span class="brand-name">ResumeGrid</span>
       </div>
-      <span class="brand-name">ResumeGrid</span>
+      <a href="/candidates" style="display:flex;align-items:center;gap:7px;padding:7px 16px;border-radius:8px;border:1px solid var(--border);background:var(--s2);color:var(--text2);text-decoration:none;font-size:12px;font-weight:600;font-family:var(--sans);letter-spacing:0.3px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text2)'">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Candidate Grid
+      </a>
     </div>
     <h1>Bulk Resume<br><span>Extraction</span></h1>
     <p class="subtitle">

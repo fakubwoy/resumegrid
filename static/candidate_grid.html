@@ -1,0 +1,1541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CandidateGrid — Alfaleus Hiring</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #08090b;
+      --s1: #0f1116;
+      --s2: #161b22;
+      --s3: #1d2330;
+      --border: #232a38;
+      --border2: #2e3a4e;
+      --accent: #3b82f6;
+      --accent-d: #2563eb;
+      --amber: #f59e0b;
+      --green: #22c55e;
+      --red: #ef4444;
+      --purple: #8b5cf6;
+      --cyan: #06b6d4;
+      --text: #e2e8f0;
+      --text2: #94a3b8;
+      --text3: #64748b;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Inter', sans-serif;
+      --display: 'Syne', sans-serif;
+      --radius: 10px;
+      --radius-lg: 16px;
+    }
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    body::before {
+      content:'';
+      position:fixed; inset:0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+      pointer-events:none; z-index:0;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    .page { max-width: 1600px; margin: 0 auto; padding: 32px 24px 80px; position: relative; z-index: 1; }
+
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    .header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .brand-mark {
+      width:32px; height:32px;
+      background:linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+      border-radius:8px; display:flex; align-items:center; justify-content:center;
+    }
+    .brand-name { font-family:var(--display); font-size:13px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:var(--text2); }
+    h1 { font-family:var(--display); font-size:clamp(1.5rem,3vw,2.2rem); font-weight:800; line-height:1.1; letter-spacing:-1px; }
+    h1 span { color:var(--accent); }
+    .subtitle { color:var(--text3); font-size:13px; margin-top:4px; }
+    .stats-row { display:flex; gap:12px; flex-wrap:wrap; }
+    .stat-chip {
+      background:var(--s1); border:1px solid var(--border); border-radius:8px;
+      padding:8px 16px; display:flex; flex-direction:column; gap:2px;
+    }
+    .stat-val { font-family:var(--mono); font-size:18px; font-weight:700; color:var(--accent); line-height:1; }
+    .stat-label { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; }
+
+    /* ── Import section ──────────────────────────────────────────────────────── */
+    .import-card {
+      background:var(--s1); border:1px solid var(--border); border-radius:var(--radius-lg);
+      padding:24px; margin-bottom:24px;
+    }
+    .import-card h2 { font-family:var(--display); font-size:16px; font-weight:700; margin-bottom:16px; }
+    .import-tabs { display:flex; gap:8px; margin-bottom:16px; }
+    .tab-btn {
+      padding:6px 16px; border-radius:6px; border:1px solid var(--border); background:transparent;
+      color:var(--text2); font-size:12px; font-family:var(--sans); cursor:pointer; transition:all 0.15s;
+      font-weight:500; letter-spacing:0.5px;
+    }
+    .tab-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .tab-pane { display:none; }
+    .tab-pane.active { display:block; }
+    textarea.paste-area {
+      width:100%; height:140px; background:var(--s2); border:1px solid var(--border); border-radius:var(--radius);
+      color:var(--text); font-family:var(--mono); font-size:11px; padding:12px; resize:vertical; outline:none;
+      transition:border-color 0.2s;
+    }
+    textarea.paste-area:focus { border-color:var(--accent); }
+    textarea.paste-area::placeholder { color:var(--text3); }
+
+    .file-drop {
+      border:2px dashed var(--border); border-radius:var(--radius); padding:40px;
+      text-align:center; cursor:pointer; transition:all 0.2s; background:var(--s2);
+    }
+    .file-drop:hover, .file-drop.drag-over { border-color:var(--accent); background:rgba(59,130,246,0.05); }
+    .file-drop input { display:none; }
+    .file-drop-label { color:var(--text2); font-size:13px; }
+    .file-drop-sub { color:var(--text3); font-size:11px; margin-top:4px; }
+
+    .import-actions { display:flex; gap:10px; margin-top:16px; align-items:center; flex-wrap:wrap; }
+    .btn-primary {
+      background:var(--accent); color:#fff; border:none; border-radius:8px;
+      padding:9px 20px; font-size:13px; font-weight:600; cursor:pointer; transition:background 0.15s;
+      display:flex; align-items:center; gap:6px;
+    }
+    .btn-primary:hover { background:var(--accent-d); }
+    .btn-primary:disabled { opacity:0.5; cursor:not-allowed; }
+    .btn-secondary {
+      background:transparent; color:var(--text2); border:1px solid var(--border); border-radius:8px;
+      padding:9px 20px; font-size:13px; font-weight:500; cursor:pointer; transition:all 0.15s;
+    }
+    .btn-secondary:hover { border-color:var(--border2); color:var(--text); }
+    .import-hint { color:var(--text3); font-size:11px; }
+
+    /* ── JD Ranking panel ─────────────────────────────────────────────────────── */
+    .jd-card {
+      background:var(--s1); border:1px solid var(--border); border-radius:var(--radius-lg);
+      padding:24px; margin-bottom:24px;
+    }
+    .jd-card h2 { font-family:var(--display); font-size:16px; font-weight:700; margin-bottom:6px; }
+    .jd-card p { color:var(--text3); font-size:12px; margin-bottom:16px; line-height:1.6; }
+    textarea.jd-area {
+      width:100%; height:120px; background:var(--s2); border:1px solid var(--border); border-radius:var(--radius);
+      color:var(--text); font-family:var(--sans); font-size:13px; padding:12px; resize:vertical; outline:none;
+      transition:border-color 0.2s; line-height:1.6;
+    }
+    textarea.jd-area:focus { border-color:var(--purple); }
+    .jd-status { font-size:12px; color:var(--text3); display:flex; align-items:center; gap:8px; }
+    .jd-status .jd-progress { flex:1; height:4px; background:var(--s2); border-radius:2px; overflow:hidden; }
+    .jd-status .jd-progress-bar { height:100%; background:var(--purple); border-radius:2px; transition:width 0.3s; width:0%; }
+    .role-filter-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .role-pill {
+      padding:4px 12px; border-radius:20px; font-size:11px; font-weight:500; cursor:pointer;
+      border:1px solid var(--border); background:var(--s2); color:var(--text2); transition:all 0.15s;
+    }
+    .role-pill.active { background:var(--purple); border-color:var(--purple); color:#fff; }
+
+    /* ── Toolbar ─────────────────────────────────────────────────────────────── */
+    .toolbar {
+      display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center;
+    }
+    .search-box {
+      flex:1; min-width:200px; background:var(--s1); border:1px solid var(--border); border-radius:8px;
+      padding:8px 14px; color:var(--text); font-family:var(--sans); font-size:13px; outline:none;
+      transition:border-color 0.2s;
+    }
+    .search-box:focus { border-color:var(--accent); }
+    .search-box::placeholder { color:var(--text3); }
+
+    select.filter-sel {
+      background:var(--s1); border:1px solid var(--border); border-radius:8px;
+      padding:8px 12px; color:var(--text2); font-size:12px; outline:none; cursor:pointer;
+      font-family:var(--sans);
+    }
+    select.filter-sel:focus { border-color:var(--accent); }
+
+    .page-info { font-size:12px; color:var(--text3); font-family:var(--mono); white-space:nowrap; }
+
+    /* ── Table ───────────────────────────────────────────────────────────────── */
+    .table-wrap {
+      background:var(--s1); border:1px solid var(--border); border-radius:var(--radius-lg);
+      overflow:hidden; margin-bottom:16px;
+    }
+    .table-scroll { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    thead th {
+      background:var(--s2); color:var(--text2); font-size:10px; text-transform:uppercase;
+      letter-spacing:1px; font-weight:600; padding:10px 14px; text-align:left;
+      white-space:nowrap; border-bottom:1px solid var(--border); position:sticky; top:0;
+      cursor:pointer; user-select:none; transition:color 0.15s;
+    }
+    thead th:hover { color:var(--text); }
+    thead th .sort-icon { opacity:0.3; margin-left:4px; }
+    thead th.sort-asc .sort-icon::after { content:'↑'; opacity:1; color:var(--accent); }
+    thead th.sort-desc .sort-icon::after { content:'↓'; opacity:1; color:var(--accent); }
+
+    tbody tr { border-bottom:1px solid var(--border); transition:background 0.1s; }
+    tbody tr:last-child { border-bottom:none; }
+    tbody tr:hover { background:var(--s2); }
+    tbody td { padding:10px 14px; color:var(--text); vertical-align:top; max-width:260px; }
+
+    .cell-name { font-weight:600; color:var(--text); font-size:13px; }
+    .cell-email { color:var(--text2); font-family:var(--mono); font-size:11px; }
+    .cell-phone { color:var(--text2); font-family:var(--mono); font-size:11px; }
+    .cell-role { }
+    .role-tag {
+      display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:600;
+      background:rgba(59,130,246,0.12); color:var(--accent); border:1px solid rgba(59,130,246,0.2);
+      white-space:nowrap;
+    }
+    .cell-college { color:var(--text2); font-size:11px; }
+    .cell-location { color:var(--text3); font-size:11px; }
+    .cell-avail { color:var(--text2); font-size:11px; }
+    .cell-text-long { max-width:280px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; color:var(--text2); font-size:11px; line-height:1.5; }
+
+    a.cell-link { color:var(--accent); font-size:11px; text-decoration:none; font-family:var(--mono); }
+    a.cell-link:hover { text-decoration:underline; }
+
+    /* Score badge */
+    .score-badge {
+      display:inline-flex; align-items:center; justify-content:center;
+      width:40px; height:40px; border-radius:50%; font-family:var(--mono); font-size:13px; font-weight:700;
+      border:2px solid; flex-shrink:0;
+    }
+    .score-high { background:rgba(34,197,94,0.1); border-color:rgba(34,197,94,0.4); color:var(--green); }
+    .score-mid  { background:rgba(245,158,11,0.1); border-color:rgba(245,158,11,0.4); color:var(--amber); }
+    .score-low  { background:rgba(239,68,68,0.1);  border-color:rgba(239,68,68,0.4);  color:var(--red); }
+    .score-na   { background:var(--s2); border-color:var(--border); color:var(--text3); font-size:10px; }
+
+    .rank-col { text-align:center; width:50px; }
+    .rank-num { font-family:var(--mono); font-size:11px; color:var(--text3); }
+
+    /* ── Pagination ───────────────────────────────────────────────────────────── */
+    .pagination { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; }
+    .page-btn {
+      width:32px; height:32px; border-radius:6px; border:1px solid var(--border);
+      background:var(--s1); color:var(--text2); font-size:12px; cursor:pointer; transition:all 0.15s;
+      display:flex; align-items:center; justify-content:center; font-family:var(--mono);
+    }
+    .page-btn:hover { border-color:var(--accent); color:var(--accent); }
+    .page-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+    .page-btn:disabled { opacity:0.3; cursor:not-allowed; }
+    .page-ellipsis { color:var(--text3); font-size:12px; padding:0 4px; }
+
+    /* ── Empty state ────────────────────────────────────────────────────────── */
+    .empty-state {
+      padding:80px 24px; text-align:center;
+    }
+    .empty-icon { font-size:40px; margin-bottom:12px; opacity:0.3; }
+    .empty-title { font-family:var(--display); font-size:16px; font-weight:700; color:var(--text2); margin-bottom:6px; }
+    .empty-sub { color:var(--text3); font-size:13px; }
+
+    /* ── Candidate detail drawer ─────────────────────────────────────────────── */
+    .drawer-overlay {
+      position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100;
+      display:none; align-items:flex-start; justify-content:flex-end;
+    }
+    .drawer-overlay.open { display:flex; }
+    .drawer {
+      width:min(560px,95vw); height:100vh; background:var(--s1); border-left:1px solid var(--border);
+      overflow-y:auto; padding:24px; animation:slideIn 0.2s ease;
+    }
+    @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+    .drawer-close {
+      position:absolute; top:16px; right:16px; width:32px; height:32px; background:var(--s2);
+      border:1px solid var(--border); border-radius:6px; cursor:pointer; display:flex;
+      align-items:center; justify-content:center; color:var(--text2); font-size:18px;
+    }
+    .drawer-name { font-family:var(--display); font-size:20px; font-weight:700; margin-bottom:4px; }
+    .drawer-meta { color:var(--text3); font-size:12px; margin-bottom:20px; }
+    .drawer-section { margin-bottom:20px; }
+    .drawer-section-title { font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--text3); font-weight:600; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+    .drawer-field { display:flex; flex-direction:column; gap:2px; margin-bottom:10px; }
+    .drawer-field-label { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; }
+    .drawer-field-val { font-size:13px; color:var(--text); line-height:1.5; }
+    .drawer-field-val a { color:var(--accent); text-decoration:none; font-family:var(--mono); font-size:11px; }
+    .drawer-field-val a:hover { text-decoration:underline; }
+    .drawer-score-row { display:flex; align-items:center; gap:16px; margin-bottom:20px; padding:16px; background:var(--s2); border-radius:var(--radius); border:1px solid var(--border); }
+    .drawer-score-val { font-family:var(--mono); font-size:36px; font-weight:700; }
+    .drawer-score-reason { font-size:12px; color:var(--text2); line-height:1.5; flex:1; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────────── */
+    .toast-container { position:fixed; bottom:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:8px; }
+    .toast {
+      padding:10px 18px; border-radius:8px; font-size:13px; font-weight:500;
+      border:1px solid; animation:toastIn 0.2s ease;
+      max-width:320px; line-height:1.4;
+    }
+    @keyframes toastIn { from{transform:translateY(20px);opacity:0} to{transform:none;opacity:1} }
+    .toast.success { background:rgba(34,197,94,0.1); border-color:rgba(34,197,94,0.3); color:var(--green); }
+    .toast.error   { background:rgba(239,68,68,0.1);  border-color:rgba(239,68,68,0.3);  color:var(--red); }
+    .toast.info    { background:rgba(59,130,246,0.1); border-color:rgba(59,130,246,0.3); color:var(--accent); }
+
+    /* ── Spinner ─────────────────────────────────────────────────────────────── */
+    .spinner {
+      display:inline-block; width:14px; height:14px; border-radius:50%;
+      border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; animation:spin 0.7s linear infinite;
+    }
+    @keyframes spin { to{transform:rotate(360deg)} }
+
+    /* ── Gender / Availability chips ─────────────────────────────────────────── */
+    .chip {
+      display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:500;
+      background:var(--s2); border:1px solid var(--border); color:var(--text2);
+    }
+
+    /* ── Loading row ──────────────────────────────────────────────────────────── */
+    .loading-row td { padding:60px; text-align:center; color:var(--text3); }
+
+    .col-visible-toggle { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+    .col-toggle-btn {
+      padding:3px 10px; border-radius:4px; font-size:10px; border:1px solid var(--border);
+      background:var(--s2); color:var(--text3); cursor:pointer; transition:all 0.15s; font-family:var(--sans);
+    }
+    .col-toggle-btn.on { background:rgba(59,130,246,0.1); border-color:rgba(59,130,246,0.3); color:var(--accent); }
+
+    .resume-link-cell { display:flex; align-items:center; gap:6px; }
+    .resume-badge {
+      display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px;
+      font-size:10px; background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.2); color:var(--green);
+    }
+    .no-resume { font-size:10px; color:var(--text3); }
+
+    .export-btn {
+      background:transparent; border:1px solid var(--border); border-radius:8px; padding:8px 14px;
+      color:var(--text2); font-size:12px; cursor:pointer; transition:all 0.15s; display:flex; align-items:center; gap:6px;
+    }
+    .export-btn:hover { border-color:var(--green); color:var(--green); }
+
+    /* Responsive */
+    @media(max-width:768px) {
+      .header { flex-direction:column; align-items:flex-start; }
+      .toolbar { gap:6px; }
+      table { font-size:11px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────────── -->
+  <div class="header">
+    <div>
+      <div class="brand" style="margin-bottom:10px;justify-content:space-between;width:100%">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="brand-mark">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        </div>
+        <span class="brand-name">Alfaleus · CandidateGrid</span>
+      </div>
+      <a href="/" style="display:flex;align-items:center;gap:7px;padding:7px 16px;border-radius:8px;border:1px solid var(--border);background:var(--s2);color:var(--text2);text-decoration:none;font-size:12px;font-weight:600;font-family:var(--sans);letter-spacing:0.3px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text2)'">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Resume Extractor
+      </a>
+    </div>
+      <h1>Candidate <span>Review Board</span></h1>
+      <p class="subtitle">Summer 2026 Internship Applications — AI-Powered Ranking &amp; Filtering</p>
+    </div>
+    <div class="stats-row" id="statsRow">
+      <div class="stat-chip"><div class="stat-val" id="statTotal">0</div><div class="stat-label">Total</div></div>
+      <div class="stat-chip"><div class="stat-val" id="statFiltered">0</div><div class="stat-label">Shown</div></div>
+      <div class="stat-chip"><div class="stat-val" id="statRanked">—</div><div class="stat-label">Ranked</div></div>
+      <div class="stat-chip"><div class="stat-val" id="statRoles">0</div><div class="stat-label">Roles</div></div>
+    </div>
+  </div>
+
+  <!-- ── Import card ──────────────────────────────────────────────────────────── -->
+  <div class="import-card" id="importCard">
+    <h2>Import Applications</h2>
+    <div class="import-tabs">
+      <button class="tab-btn active" onclick="switchTab('paste')">Paste Data</button>
+      <button class="tab-btn" onclick="switchTab('file')">Upload File</button>
+    </div>
+
+    <div class="tab-pane active" id="tab-paste">
+      <textarea class="paste-area" id="pasteArea"
+        placeholder="Paste your Google Form / CSV / TSV data here.&#10;&#10;The first row should be headers. Columns like 'Full Name', 'Primary contact number', 'Select the role(s)...', 'Resume / Portfolio Drive Links', etc. are auto-detected.&#10;&#10;Tip: Copy directly from Google Sheets — Ctrl+A, Ctrl+C, paste here."></textarea>
+    </div>
+
+    <div class="tab-pane" id="tab-file">
+      <div class="file-drop" id="fileDrop" onclick="document.getElementById('fileInput').click()">
+        <input type="file" id="fileInput" accept=".csv,.tsv,.xlsx,.xls,.txt" />
+        <div class="file-drop-label">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="display:block;margin:0 auto 8px;opacity:0.4">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Drop CSV / Excel / TSV here or click to browse
+        </div>
+        <div class="file-drop-sub">Supports .csv · .tsv · .xlsx · .xls</div>
+      </div>
+    </div>
+
+    <div class="import-actions">
+      <button class="btn-primary" id="importBtn" onclick="importData()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Load Candidates
+      </button>
+      <button class="btn-secondary" id="clearBtn" onclick="clearAll()" style="display:none">Clear All</button>
+      <span class="import-hint" id="importHint">Supports Google Form responses (TSV/CSV), Excel exports, or any tabular format</span>
+    </div>
+  </div>
+
+  <!-- ── JD Ranking card ──────────────────────────────────────────────────────── -->
+  <div class="jd-card" id="jdCard" style="display:none">
+    <h2>🎯 AI-Powered JD Ranking</h2>
+    <p>Paste a Job Description below. The AI will first filter candidates by role match, fetch their Google Drive resumes, and then rank them using both their form data and actual resume content. Candidates without a role match are ranked separately.</p>
+
+    <textarea class="jd-area" id="jdArea" placeholder="Paste job description here... (role title, requirements, skills, responsibilities)" oninput="matchRolePillsToJD()"></textarea>
+
+    <div id="roleFilterSection" style="margin-top:10px;margin-bottom:4px;display:none">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Rank only these roles <span style="text-transform:none;color:var(--purple)" id="roleMatchHint"></span></div>
+      <div class="role-filter-row" id="rolePills"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;">Click pills to toggle. Only highlighted (purple) roles will be ranked. Candidates in other roles are skipped.</div>
+    </div>
+
+    <div class="import-actions" style="margin-top:12px">
+      <button class="btn-primary" id="rankBtn" onclick="startRanking()" style="background:var(--purple);border:none">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Rank with AI + Resumes
+      </button>
+      <button class="btn-secondary" onclick="clearRanking()">Clear Ranking</button>
+      <span class="jd-status" id="jdStatus" style="display:none">
+        <span id="jdStatusText">Preparing...</span>
+        <div class="jd-progress"><div class="jd-progress-bar" id="jdBar"></div></div>
+        <span id="jdPct">0%</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- ── Toolbar ──────────────────────────────────────────────────────────────── -->
+  <div id="gridSection" style="display:none">
+    <div class="toolbar">
+      <input class="search-box" id="searchBox" placeholder="Search name, email, college, role, location..." oninput="applyFilters()" />
+      <select class="filter-sel" id="roleFilter" onchange="applyFilters()">
+        <option value="">All Roles</option>
+      </select>
+      <select class="filter-sel" id="yearFilter" onchange="applyFilters()">
+        <option value="">All Years</option>
+      </select>
+      <select class="filter-sel" id="genderFilter" onchange="applyFilters()">
+        <option value="">All Genders</option>
+        <option value="Male">Male</option>
+        <option value="Female">Female</option>
+      </select>
+      <select class="filter-sel" id="availFilter" onchange="applyFilters()">
+        <option value="">Any Availability</option>
+        <option value="4">4+ Weeks</option>
+        <option value="6">6+ Weeks</option>
+        <option value="8">8+ Weeks</option>
+      </select>
+      <select class="filter-sel" id="hyderabadFilter" onchange="applyFilters()">
+        <option value="">Hyd: Any</option>
+        <option value="yes">In-Person: Yes</option>
+        <option value="no">In-Person: No</option>
+      </select>
+      <select class="filter-sel" id="sortField" onchange="applyFilters()">
+        <option value="">Sort by...</option>
+        <option value="score_desc">Score ↓</option>
+        <option value="score_asc">Score ↑</option>
+        <option value="name_asc">Name A→Z</option>
+        <option value="timestamp_desc">Latest First</option>
+      </select>
+      <select class="filter-sel" id="pageSizeSel" onchange="changePageSize()">
+        <option value="25">25 / page</option>
+        <option value="50">50 / page</option>
+        <option value="100">100 / page</option>
+      </select>
+      <button class="export-btn" onclick="exportCSV()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+      <span class="page-info" id="pageInfo">0 candidates</span>
+    </div>
+
+    <!-- ── Table ──────────────────────────────────────────────────────────────── -->
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table id="candidateTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Pagination ─────────────────────────────────────────────────────────── -->
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+</div><!-- /page -->
+
+<!-- ── Candidate drawer ────────────────────────────────────────────────────────── -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer(event)">
+  <div class="drawer" id="drawer" style="position:relative">
+    <div class="drawer-close" onclick="closeDrawer(null)">×</div>
+    <div id="drawerContent"></div>
+  </div>
+</div>
+
+<!-- ── Toast container ─────────────────────────────────────────────────────────── -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+let allCandidates = [];   // raw parsed data
+let filtered = [];        // after search/filter
+let currentPage = 1;
+let pageSize = 25;
+let rankingActive = false;
+let activeTab = 'paste';
+
+// Column definitions — maps our internal key to display label + accessor
+const COLUMNS = [
+  { key: 'rank',         label: '#',           type: 'rank' },
+  { key: 'score',        label: 'Score',        type: 'score' },
+  { key: 'full_name',    label: 'Name',         type: 'name' },
+  { key: 'roles',        label: 'Role(s)',      type: 'roles' },
+  { key: 'college',      label: 'College',      type: 'text' },
+  { key: 'degree',       label: 'Degree',       type: 'text' },
+  { key: 'year',         label: 'Year',         type: 'text' },
+  { key: 'duration',     label: 'Duration',     type: 'text' },
+  { key: 'start_date',   label: 'Can Start',    type: 'text' },
+  { key: 'location',     label: 'Location',     type: 'text' },
+  { key: 'hyderabad',    label: 'HYD?',         type: 'chip' },
+  { key: 'gender',       label: 'Gender',       type: 'chip' },
+  { key: 'linkedin',     label: 'LinkedIn',     type: 'link' },
+  { key: 'resume',       label: 'Resume',       type: 'resume' },
+  { key: 'email',        label: 'Email',        type: 'email' },
+  { key: 'phone',        label: 'Phone',        type: 'mono' },
+  { key: 'timestamp',    label: 'Submitted',    type: 'date' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Column name normalization — maps form column headers to internal keys
+// ─────────────────────────────────────────────────────────────────────────────
+const FIELD_MAP = {
+  // Timestamp
+  'timestamp': 'timestamp',
+  // Email
+  'email address': 'email', 'email': 'email',
+  // Name
+  'full name': 'full_name', 'name': 'full_name',
+  // Phone
+  'primary contact number': 'phone', 'phone': 'phone', 'contact number': 'phone',
+  // WhatsApp
+  'whatsapp no.': 'whatsapp', 'whatsapp': 'whatsapp',
+  // Gender
+  'gender': 'gender',
+  // Location
+  'home town location': 'location', 'location': 'location',
+  // College
+  'college': 'college',
+  // College unlisted
+  "if your college is not listed above, please give college name and location": 'college_other',
+  // College ID
+  'college id number': 'college_id',
+  // Degree
+  'degree type': 'degree', 'degree': 'degree',
+  // Year
+  'current year of study (as of now) (please select the year you have just completed / are currently in, not the year you will enter next.)': 'year',
+  'current year of study': 'year',
+  // Duration
+  'what duration are you available for (starting june 2026)': 'duration',
+  'duration': 'duration',
+  // Start date
+  'when can you start?': 'start_date', 'when can you start': 'start_date',
+  // Commitments
+  'do you have any other commitments this summer—such as internships, courses, or planned vacations—that might require significant time or affect your availability?': 'commitments',
+  'other commitments': 'commitments',
+  // Hyderabad
+  'are you available for in person (on-site) at hyderabad?': 'hyderabad',
+  'in person hyderabad': 'hyderabad',
+  // Roles — many possible header variants from different form versions
+  'select the role(s) you are genuinely experienced in and wish to apply for. please choose only those roles where you have significant prior experience—not just areas you wish to explore or learn. based on your selection, a detailed interview will follow.': 'roles_raw',
+  'select the role(s) you are genuinely experienced': 'roles_raw',
+  'select the role(s)': 'roles_raw',
+  'roles you are applying for': 'roles_raw',
+  'role(s) applying for': 'roles_raw',
+  'role(s) you wish to apply': 'roles_raw',
+  'which role': 'roles_raw',
+  'roles_raw': 'roles_raw',
+  'role': 'roles_raw',
+  // Why Alfaleus
+  'why do you want to work at alfaleus specifically? no chatgpt :) describe one project where you built/executed something end-to-end': 'why_alfaleus',
+  'why alfaleus': 'why_alfaleus',
+  // LinkedIn
+  'linkedin profile': 'linkedin', 'linkedin': 'linkedin',
+  // Resume
+  'resume / portfolio drive links - ( provide relevant contents of your respective domains) - please give share permission such that anyone with link is able to view it': 'resume',
+  'resume': 'resume', 'portfolio': 'resume', 'resume / portfolio drive links': 'resume',
+  // Achievements
+  'achievements and awards (technical / management events , conferences etc.)': 'achievements',
+  'achievements': 'achievements',
+  // Anything else
+  'anything else you would like us to know?': 'notes',
+};
+
+function normalizeKey(raw) {
+  // Normalise special chars that vary between export sources:
+  // em-dash/en-dash -> hyphen, curly quotes -> straight, NBSP -> space
+  function canon(s) {
+    return s.toLowerCase().trim()
+      .replace(/[–—]/g, '-')
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/ /g, ' ')
+      .replace(/\s+/g, ' ');
+  }
+  const lower = canon(raw);
+  // Build canonicalised cache on first call
+  if (!normalizeKey._cache) {
+    normalizeKey._cache = {};
+    for (const [k, v] of Object.entries(FIELD_MAP)) {
+      normalizeKey._cache[canon(k)] = v;
+    }
+  }
+  const cache = normalizeKey._cache;
+  // 1. Exact match
+  if (cache[lower]) return cache[lower];
+  // 2. Partial match — only keys >8 chars to avoid 'role', 'email' false positives
+  for (const [k, v] of Object.entries(cache)) {
+    if (k.length > 8 && (lower.includes(k) || k.includes(lower))) return v;
+  }
+  return lower.replace(/[^a-z0-9]+/g, '_');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tab switching
+// ─────────────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', ['paste','file'][i] === tab));
+  document.querySelectorAll('.tab-pane').forEach((p,i) => p.classList.toggle('active', ['paste','file'][i] === tab));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File drop
+// ─────────────────────────────────────────────────────────────────────────────
+const fileDrop = document.getElementById('fileDrop');
+const fileInput = document.getElementById('fileInput');
+
+fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('drag-over'); });
+fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('drag-over'));
+fileDrop.addEventListener('drop', e => {
+  e.preventDefault(); fileDrop.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFileUpload(f);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); });
+
+function handleFileUpload(file) {
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.csv') || name.endsWith('.tsv') || name.endsWith('.txt')) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('pasteArea').value = e.target.result;
+      switchTab('paste');
+      showToast(`Loaded ${file.name}`, 'success');
+    };
+    reader.readAsText(file);
+  } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    readExcel(file);
+  } else {
+    showToast('Unsupported file type. Use CSV, TSV, or XLSX.', 'error');
+  }
+}
+
+async function readExcel(file) {
+  if (!window.XLSX) {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = () => readExcel(file);
+    document.head.appendChild(s);
+    return;
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+
+  // Parse directly as array-of-arrays — avoids CSV re-encoding mangling long question headers
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (rows.length < 2) { showToast('Sheet appears empty', 'error'); return; }
+
+  const headers = rows[0].map(h => String(h).trim());
+  const mappedHeaders = headers.map(normalizeKey);
+
+  const candidates = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = rows[i];
+    if (cells.every(c => String(c).trim() === '')) continue;
+    const obj = { _rowIndex: i };
+    headers.forEach((h, j) => { obj[mappedHeaders[j]] = String(cells[j] ?? '').trim(); });
+    if (!isJunkRow(obj)) { postProcess(obj); candidates.push(obj); }
+  }
+
+  if (candidates.length === 0) { showToast('No valid candidate rows found', 'error'); return; }
+  allCandidates = candidates;
+  currentPage = 1;
+  populateRoleFilters();
+  document.getElementById('jdCard').style.display = '';
+  document.getElementById('gridSection').style.display = '';
+  document.getElementById('clearBtn').style.display = '';
+  applyFilters();
+  updateStats();
+  showToast(`Loaded ${candidates.length} candidates from ${wb.SheetNames[0]}`, 'success');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parse pasted / CSV / TSV data
+// ─────────────────────────────────────────────────────────────────────────────
+function parseTabular(raw) {
+  // Detect delimiter from the raw text (before any line splitting)
+  // Count tabs vs commas in the first 500 chars
+  const sample = raw.slice(0, 500);
+  const tabs = (sample.match(/\t/g)||[]).length;
+  const commas = (sample.match(/,/g)||[]).length;
+  const delim = tabs >= commas ? '\t' : ',';
+
+  // RFC 4180-compliant parser: handles quoted cells with embedded newlines,
+  // tabs, and commas — critical for Google Sheets exports where header cells
+  // like "Current Year of Study (as of now)\n(Please select...)" contain
+  // literal newlines that break naive line.split('\n') approaches.
+  function parseAll(text) {
+    const records = [];
+    let cur = '';
+    let inQ = false;
+    let row = [];
+    const n = text.length;
+
+    for (let i = 0; i < n; i++) {
+      const ch = text[i];
+      const next = text[i + 1];
+
+      if (inQ) {
+        if (ch === '"') {
+          if (next === '"') { cur += '"'; i++; }  // escaped quote ""
+          else { inQ = false; }                    // closing quote
+        } else {
+          cur += ch;  // include embedded newlines / tabs verbatim
+        }
+      } else {
+        if (ch === '"') {
+          inQ = true;
+        } else if (ch === delim) {
+          row.push(cur); cur = '';
+        } else if (ch === '\n' || (ch === '\r' && next === '\n')) {
+          if (ch === '\r') i++;  // consume \r of \r\n
+          row.push(cur); cur = '';
+          records.push(row); row = [];
+        } else if (ch === '\r') {
+          row.push(cur); cur = '';
+          records.push(row); row = [];
+        } else {
+          cur += ch;
+        }
+      }
+    }
+    // flush last cell / row
+    if (cur || row.length) { row.push(cur); records.push(row); }
+    return records;
+  }
+
+  const records = parseAll(raw.trim());
+  if (records.length < 2) return null;
+
+  // First record = headers; normalise embedded newlines to spaces
+  const headers = records[0].map(h => h.replace(/\s+/g, ' ').trim());
+  const mappedHeaders = headers.map(normalizeKey);
+
+  const rows = [];
+  for (let i = 1; i < records.length; i++) {
+    const cells = records[i];
+    // Skip completely empty records
+    if (cells.every(c => !c.trim())) continue;
+    const obj = { _rowIndex: i };
+    headers.forEach((h, j) => {
+      const key = mappedHeaders[j];
+      obj[key] = (cells[j] || '').trim();
+    });
+    if (isJunkRow(obj)) continue;
+    postProcess(obj);
+    rows.push(obj);
+  }
+  return { headers: mappedHeaders, rows };
+}
+
+// Skip rows that are clearly not real candidates:
+// - No name AND no email AND no phone
+// - Name field contains question-like text (fragment of a column header)
+function isJunkRow(obj) {
+  const name = obj.full_name || '';
+  const email = obj.email || '';
+  const phone = obj.phone || '';
+
+  // All key identity fields empty
+  if (!name && !email && !phone) return true;
+
+  // Name looks like a question / header fragment (long, contains "?", or starts with common question words)
+  if (name.length > 60) return true;
+  if (name.includes('?')) return true;
+  if (/^(select|what|when|do you|are you|if your|please|describe|why|how)/i.test(name)) return true;
+
+  // Email field contains question text
+  if (email.length > 80 || (email && !email.includes('@'))) return true;
+
+  return false;
+}
+
+function postProcess(c) {
+  // Resolve college — prefer specific over dropdown "Other"
+  if (c.college_other && (!c.college || c.college.toLowerCase().includes('other'))) {
+    c.college = c.college_other;
+  }
+
+  // Parse roles into array
+  // Filter out non-role "answers" that come from form options like "None" or
+  // free-text like "but I would like to learn" — these are not real role names.
+  const ROLE_NOISE = [
+    /^none$/i,
+    /\bwould like to learn\b/i,
+    /\bwish to (explore|learn)\b/i,
+    /^fresher$/i,
+    /^n\/a$/i,
+    /^-+$/,
+    /^no (role|experience)/i,
+  ];
+  function isNoiseRole(r) {
+    return ROLE_NOISE.some(re => re.test(r.trim()));
+  }
+
+  c.roles = [];
+  const raw = c.roles_raw || '';
+  if (raw) {
+    c.roles = raw.split(/[,;]+/).map(r => r.trim()).filter(r => r && !isNoiseRole(r));
+  }
+  // Keep the original raw for display/search purposes but roles[] is clean
+
+  // Normalize hyderabad field
+  if (c.hyderabad) {
+    const hy = c.hyderabad.toLowerCase();
+    c.hyderabad_bool = hy.includes('yes') || hy === 'y' || hy === 'true';
+  } else {
+    c.hyderabad_bool = false;
+  }
+
+  // Extract duration weeks number
+  c.duration_weeks = 0;
+  if (c.duration) {
+    const m = c.duration.match(/(\d+)/);
+    if (m) c.duration_weeks = parseInt(m[1]);
+  }
+
+  // Convert Excel serial date in start_date (e.g. 46184 -> "11 Jun 2026")
+  if (c.start_date) {
+    const n = Number(c.start_date);
+    if (!isNaN(n) && n > 40000 && n < 60000) {
+      const d = new Date((n - 25569) * 86400 * 1000);
+      c.start_date = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+  }
+
+  // Convert Excel serial datetime in timestamp (e.g. 46117.61530855324 -> "5 Apr 2026, 14:46")
+  if (c.timestamp) {
+    const n = Number(c.timestamp);
+    if (!isNaN(n) && n > 40000 && n < 60000) {
+      const d = new Date((n - 25569) * 86400 * 1000);
+      const day   = d.getUTCDate();
+      const month = d.toLocaleString('en-IN', { month: 'short', timeZone: 'UTC' });
+      const year  = d.getUTCFullYear();
+      const hh    = String(d.getUTCHours()).padStart(2, '0');
+      const mm    = String(d.getUTCMinutes()).padStart(2, '0');
+      c.timestamp = `${day} ${month} ${year}, ${hh}:${mm}`;
+    }
+  }
+
+  // Score is null until ranked
+  c.score = null;
+  c.score_reason = '';
+  c.rank = null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Import
+// ─────────────────────────────────────────────────────────────────────────────
+function importData() {
+  const raw = document.getElementById('pasteArea').value.trim();
+  if (!raw) { showToast('Paste some data first', 'error'); return; }
+
+  const result = parseTabular(raw);
+  if (!result || result.rows.length === 0) {
+    showToast('Could not parse data — check format', 'error');
+    return;
+  }
+
+  allCandidates = result.rows;
+  currentPage = 1;
+
+  // Build role filter dropdown
+  populateRoleFilters();
+
+  // Show sections
+  document.getElementById('jdCard').style.display = '';
+  document.getElementById('gridSection').style.display = '';
+  document.getElementById('clearBtn').style.display = '';
+
+  applyFilters();
+  updateStats();
+  showToast(`Loaded ${allCandidates.length} candidates`, 'success');
+}
+
+function clearAll() {
+  allCandidates = [];
+  filtered = [];
+  document.getElementById('jdCard').style.display = 'none';
+  document.getElementById('gridSection').style.display = 'none';
+  document.getElementById('clearBtn').style.display = 'none';
+  document.getElementById('pasteArea').value = '';
+  document.getElementById('jdArea').value = '';
+  renderTable();
+  updateStats();
+  showToast('Cleared', 'info');
+}
+
+function populateRoleFilters() {
+  const roleSet = new Set();
+  allCandidates.forEach(c => c.roles.forEach(r => roleSet.add(r)));
+  const roles = [...roleSet].sort();
+
+  const roleFilter = document.getElementById('roleFilter');
+  roleFilter.innerHTML = '<option value="">All Roles</option>';
+  roles.forEach(r => {
+    const o = document.createElement('option'); o.value = r; o.textContent = r;
+    roleFilter.appendChild(o);
+  });
+
+  // Year filter
+  const yearSet = new Set(allCandidates.map(c => c.year).filter(Boolean));
+  const yearFilter = document.getElementById('yearFilter');
+  yearFilter.innerHTML = '<option value="">All Years</option>';
+  [...yearSet].sort().forEach(y => {
+    const o = document.createElement('option'); o.value = y; o.textContent = `Year ${y}`;
+    yearFilter.appendChild(o);
+  });
+
+  // Role pills in JD section — start deselected; auto-select via matchRolePillsToJD()
+  const pillsDiv = document.getElementById('rolePills');
+  pillsDiv.innerHTML = '';
+  roles.forEach(r => {
+    const p = document.createElement('div');
+    p.className = 'role-pill';   // NOT active by default — user/JD selects them
+    p.textContent = r;
+    p.dataset.role = r;
+    p.onclick = () => { p.classList.toggle('active'); };
+    pillsDiv.appendChild(p);
+  });
+  document.getElementById('roleFilterSection').style.display = roles.length > 0 ? '' : 'none';
+
+  // Stats
+  document.getElementById('statRoles').textContent = roles.length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filtering & Sorting
+// ─────────────────────────────────────────────────────────────────────────────
+function applyFilters() {
+  const q = document.getElementById('searchBox').value.toLowerCase();
+  const role = document.getElementById('roleFilter').value;
+  const year = document.getElementById('yearFilter').value;
+  const gender = document.getElementById('genderFilter').value;
+  const minWeeks = parseInt(document.getElementById('availFilter').value || '0');
+  const hydFilter = document.getElementById('hyderabadFilter').value;
+  const sort = document.getElementById('sortField').value;
+
+  filtered = allCandidates.filter(c => {
+    if (q) {
+      const hay = [c.full_name, c.email, c.college, c.roles_raw, c.location, c.degree, c.year, c.phone].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (role && !c.roles.includes(role)) return false;
+    if (year && c.year !== year) return false;
+    if (gender && c.gender !== gender) return false;
+    if (minWeeks && c.duration_weeks < minWeeks) return false;
+    if (hydFilter === 'yes' && !c.hyderabad_bool) return false;
+    if (hydFilter === 'no' && c.hyderabad_bool) return false;
+    return true;
+  });
+
+  // Sorting
+  if (sort === 'score_desc') {
+    filtered.sort((a,b) => (b.score||0) - (a.score||0));
+  } else if (sort === 'score_asc') {
+    filtered.sort((a,b) => (a.score||0) - (b.score||0));
+  } else if (sort === 'name_asc') {
+    filtered.sort((a,b) => (a.full_name||'').localeCompare(b.full_name||''));
+  } else if (sort === 'timestamp_desc') {
+    filtered.sort((a,b) => (b.timestamp||'').localeCompare(a.timestamp||''));
+  } else if (rankingActive) {
+    // Default when ranked: score desc
+    filtered.sort((a,b) => {
+      const as = a.score !== null ? a.score : -1;
+      const bs = b.score !== null ? b.score : -1;
+      return bs - as;
+    });
+  }
+
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+  updateStats();
+}
+
+function changePageSize() {
+  pageSize = parseInt(document.getElementById('pageSizeSel').value);
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render Table
+// ─────────────────────────────────────────────────────────────────────────────
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  const thead = document.getElementById('tableHead');
+
+  if (filtered.length === 0) {
+    thead.innerHTML = '';
+    tbody.innerHTML = `<tr><td colspan="20"><div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">No candidates found</div><div class="empty-sub">${allCandidates.length > 0 ? 'Try adjusting filters or search query.' : 'Import data to get started.'}</div></div></td></tr>`;
+    return;
+  }
+
+  const start = (currentPage-1) * pageSize;
+  const end = Math.min(start + pageSize, filtered.length);
+  const page = filtered.slice(start, end);
+
+  // Build header
+  thead.innerHTML = `<tr>
+    <th class="rank-col">Rank</th>
+    <th>Score</th>
+    <th>Name</th>
+    <th>Role(s)</th>
+    <th>College</th>
+    <th>Year</th>
+    <th>Duration</th>
+    <th>Location</th>
+    <th>HYD?</th>
+    <th>Resume</th>
+    <th>LinkedIn</th>
+    <th>Email</th>
+    <th>Phone</th>
+    <th>Submitted</th>
+  </tr>`;
+
+  // Build rows
+  tbody.innerHTML = '';
+  page.forEach((c, i) => {
+    const globalRank = rankingActive && c.score !== null ? (filtered.filter(x => x.score !== null).findIndex(x => x === c) + 1) : null;
+    const scoreClass = c.score === null ? 'score-na' : c.score >= 70 ? 'score-high' : c.score >= 45 ? 'score-mid' : 'score-low';
+
+    const rolesHtml = (c.roles||[]).map(r => `<span class="role-tag">${escHtml(r)}</span>`).join(' ') || `<span style="color:var(--text3);font-size:11px">—</span>`;
+    const resumeHtml = c.resume
+      ? `<div class="resume-link-cell"><a class="cell-link" href="${escHtml(c.resume)}" target="_blank" title="${escHtml(c.resume)}">
+          <span class="resume-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> View</span>
+         </a></div>`
+      : `<span class="no-resume">—</span>`;
+
+    const linkedinHtml = c.linkedin
+      ? `<a class="cell-link" href="${escHtml(c.linkedin)}" target="_blank">Profile ↗</a>`
+      : '<span style="color:var(--text3)">—</span>';
+
+    const ts = c.timestamp || '—';
+    const hydChip = `<span class="chip" style="${c.hyderabad_bool ? 'background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.2);color:var(--green)' : ''}">${c.hyderabad_bool ? 'Yes' : 'No'}</span>`;
+
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.onclick = () => openDrawer(c);
+    tr.innerHTML = `
+      <td class="rank-col"><span class="rank-num">${globalRank !== null ? '#' + globalRank : (start + i + 1)}</span></td>
+      <td><div class="${scoreClass} score-badge">${c.score !== null ? c.score : '—'}</div></td>
+      <td>
+        <div class="cell-name">${escHtml(c.full_name || '—')}</div>
+        <div class="cell-email">${escHtml(c.email || '')}</div>
+      </td>
+      <td>${rolesHtml}</td>
+      <td class="cell-college">${escHtml(c.college || '—')}</td>
+      <td><span class="chip">${escHtml(c.year || '—')}</span></td>
+      <td class="cell-avail">${escHtml(c.duration || '—')}</td>
+      <td class="cell-location">${escHtml(c.location || '—')}</td>
+      <td>${hydChip}</td>
+      <td>${resumeHtml}</td>
+      <td>${linkedinHtml}</td>
+      <td><span class="cell-email">${escHtml(c.email || '—')}</span></td>
+      <td><span class="cell-phone">${escHtml(c.phone || '—')}</span></td>
+      <td style="color:var(--text3);font-size:11px;white-space:nowrap">${ts}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('pageInfo').textContent = `${filtered.length} candidates · page ${currentPage} of ${Math.ceil(filtered.length/pageSize)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination
+// ─────────────────────────────────────────────────────────────────────────────
+function renderPagination() {
+  const total = Math.ceil(filtered.length / pageSize);
+  const pg = document.getElementById('pagination');
+  if (total <= 1) { pg.innerHTML = ''; return; }
+
+  let html = '';
+  html += `<button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹</button>`;
+
+  const range = paginationRange(currentPage, total);
+  range.forEach(p => {
+    if (p === '...') {
+      html += `<span class="page-ellipsis">…</span>`;
+    } else {
+      html += `<button class="page-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
+    }
+  });
+
+  html += `<button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===total?'disabled':''}>›</button>`;
+  pg.innerHTML = html;
+}
+
+function paginationRange(cur, total) {
+  if (total <= 7) return Array.from({length:total},(_,i)=>i+1);
+  const pages = [];
+  if (cur <= 4) {
+    pages.push(1,2,3,4,5,'...',total);
+  } else if (cur >= total - 3) {
+    pages.push(1,'...',total-4,total-3,total-2,total-1,total);
+  } else {
+    pages.push(1,'...',cur-1,cur,cur+1,'...',total);
+  }
+  return pages;
+}
+
+function goPage(p) {
+  const total = Math.ceil(filtered.length / pageSize);
+  if (p < 1 || p > total) return;
+  currentPage = p;
+  renderTable();
+  renderPagination();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stats
+// ─────────────────────────────────────────────────────────────────────────────
+function updateStats() {
+  document.getElementById('statTotal').textContent = allCandidates.length;
+  document.getElementById('statFiltered').textContent = filtered.length;
+  const ranked = allCandidates.filter(c => c.score !== null).length;
+  document.getElementById('statRanked').textContent = ranked || '—';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawer
+// ─────────────────────────────────────────────────────────────────────────────
+function openDrawer(c) {
+  const scoreClass = c.score === null ? 'score-na' : c.score >= 70 ? 'score-high' : c.score >= 45 ? 'score-mid' : 'score-low';
+  const rolesHtml = (c.roles||[]).map(r => `<span class="role-tag">${escHtml(r)}</span>`).join(' ') || '—';
+
+  let scoreSection = '';
+  if (c.score !== null) {
+    scoreSection = `<div class="drawer-score-row">
+      <div>
+        <div class="drawer-score-val ${scoreClass === 'score-high' ? '' : scoreClass === 'score-mid' ? 'style="color:var(--amber)"' : 'style="color:var(--red)"'}" style="color:${c.score>=70?'var(--green)':c.score>=45?'var(--amber)':'var(--red)'}">${c.score}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">/ 100</div>
+      </div>
+      <div class="drawer-score-reason">${escHtml(c.score_reason || 'No reason provided')}</div>
+    </div>`;
+  }
+
+  document.getElementById('drawerContent').innerHTML = `
+    ${scoreSection}
+    <div class="drawer-name">${escHtml(c.full_name || 'Unknown')}</div>
+    <div class="drawer-meta">${escHtml(c.email || '')} · ${escHtml(c.phone || '')} · ${escHtml(c.whatsapp ? 'WA: '+c.whatsapp : '')}</div>
+    <div style="margin-bottom:16px">${rolesHtml}</div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Contact &amp; Links</div>
+      <div class="drawer-field"><div class="drawer-field-label">Email</div><div class="drawer-field-val">${escHtml(c.email||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Phone</div><div class="drawer-field-val">${escHtml(c.phone||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">WhatsApp</div><div class="drawer-field-val">${escHtml(c.whatsapp||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">LinkedIn</div><div class="drawer-field-val">${c.linkedin?`<a href="${escHtml(c.linkedin)}" target="_blank">${escHtml(c.linkedin)}</a>`:'—'}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Resume / Portfolio</div><div class="drawer-field-val">${c.resume?`<a href="${escHtml(c.resume)}" target="_blank">${escHtml(c.resume)}</a>`:'—'}</div></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Education</div>
+      <div class="drawer-field"><div class="drawer-field-label">College</div><div class="drawer-field-val">${escHtml(c.college||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Degree</div><div class="drawer-field-val">${escHtml(c.degree||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Current Year</div><div class="drawer-field-val">${escHtml(c.year||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">College ID</div><div class="drawer-field-val">${escHtml(c.college_id||'—')}</div></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Availability</div>
+      <div class="drawer-field"><div class="drawer-field-label">Duration</div><div class="drawer-field-val">${escHtml(c.duration||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Can Start</div><div class="drawer-field-val">${escHtml(c.start_date||'—')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Hyderabad In-Person</div><div class="drawer-field-val">${c.hyderabad_bool?'✅ Yes':'❌ No'} ${escHtml(c.hyderabad||'')}</div></div>
+      <div class="drawer-field"><div class="drawer-field-label">Other Commitments</div><div class="drawer-field-val">${escHtml(c.commitments||'—')}</div></div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Why Alfaleus &amp; Project</div>
+      <div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.why_alfaleus||'—')}</div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Achievements</div>
+      <div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.achievements||'—')}</div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Additional Notes</div>
+      <div class="drawer-field-val" style="font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap">${escHtml(c.notes||'—')}</div>
+    </div>
+  `;
+  document.getElementById('drawerOverlay').classList.add('open');
+}
+
+function closeDrawer(e) {
+  if (!e || e.target === document.getElementById('drawerOverlay')) {
+    document.getElementById('drawerOverlay').classList.remove('open');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI RANKING
+// ─────────────────────────────────────────────────────────────────────────────
+const API_BASE = '';  // Same origin
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-match JD text to role pills
+// ─────────────────────────────────────────────────────────────────────────────
+// ── AI-powered JD → role matching (debounced, fires after user stops typing) ──
+let _jdMatchTimer = null;
+
+function matchRolePillsToJD() {
+  clearTimeout(_jdMatchTimer);
+  const jd = (document.getElementById('jdArea').value || '').trim();
+  if (jd.length < 80) return; // too short to be a real JD yet
+
+  const hint = document.getElementById('roleMatchHint');
+  if (hint) hint.textContent = '— analysing JD…';
+
+  _jdMatchTimer = setTimeout(() => _aiMatchRolesToJD(jd), 900); // wait 900ms after last keystroke
+}
+
+async function _aiMatchRolesToJD(jd) {
+  const pills = [...document.querySelectorAll('#rolePills .role-pill')];
+  if (pills.length === 0) return;
+
+  const roleNames = pills.map(p => p.dataset.role);
+  const hint = document.getElementById('roleMatchHint');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/match-roles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jd, roles: roleNames }),
+      signal: AbortSignal.timeout(20000)
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (Array.isArray(data.matched_indices)) {
+      const matchedSet = new Set(data.matched_indices);
+      let matched = 0;
+      pills.forEach((p, i) => {
+        const isMatch = matchedSet.has(i);
+        p.classList.toggle('active', isMatch);
+        if (isMatch) matched++;
+      });
+      if (hint) {
+        hint.textContent = matched > 0
+          ? `— ${matched} role${matched > 1 ? 's' : ''} matched · ${data.reasoning || ''}`
+          : `— no match · ${data.reasoning || 'select roles manually'}`;
+      }
+    } else {
+      _fallbackKeywordMatch();
+    }
+  } catch(e) {
+    console.warn('AI role match failed, falling back to keyword match:', e);
+    _fallbackKeywordMatch();
+  }
+}
+
+function _fallbackKeywordMatch() {
+  // Simple keyword fallback — only used if AI call fails
+  const jd = (document.getElementById('jdArea').value || '').toLowerCase();
+  const pills = [...document.querySelectorAll('#rolePills .role-pill')];
+  const hint = document.getElementById('roleMatchHint');
+  let matched = 0;
+  pills.forEach(p => {
+    // Check if the role's meaningful words appear in the JD title/first 500 chars
+    const roleWords = p.dataset.role.toLowerCase().split(/[\s\/\(\)\+\-]+/).filter(w => w.length > 3);
+    const jdHead = jd.slice(0, 500);
+    const hits = roleWords.filter(w => jdHead.includes(w)).length;
+    const isMatch = hits >= Math.ceil(roleWords.length * 0.4);
+    p.classList.toggle('active', isMatch);
+    if (isMatch) matched++;
+  });
+  if (hint) hint.textContent = matched > 0 ? `— ${matched} role(s) matched (keyword fallback)` : '— select roles manually';
+}
+
+async function startRanking() {
+  const jd = document.getElementById('jdArea').value.trim();
+  if (!jd) { showToast('Paste a job description first', 'error'); return; }
+  if (allCandidates.length === 0) { showToast('Load candidates first', 'error'); return; }
+
+  // Which roles to rank?
+  const selectedRoles = [...document.querySelectorAll('#rolePills .role-pill.active')].map(p => p.dataset.role);
+
+  // Filter to candidates with matching roles.
+  // If no pills exist (data came from a source without role column), rank all.
+  const hasPills = document.querySelectorAll('#rolePills .role-pill').length > 0;
+  let toRank = allCandidates;
+
+  if (hasPills && selectedRoles.length === 0) {
+    // No pills selected — warn the user instead of silently ranking everyone
+    showToast('Select at least one role pill to rank, or they\'ll all be scored against this JD', 'error');
+    return;
+  }
+
+  if (hasPills && selectedRoles.length > 0) {
+    toRank = allCandidates.filter(c => c.roles.some(r => selectedRoles.includes(r)));
+    if (toRank.length === 0) {
+      showToast('No candidates match the selected roles', 'error'); return;
+    }
+    showToast(`Ranking ${toRank.length} of ${allCandidates.length} candidates (${selectedRoles.join(', ')})…`, 'info');
+  }
+
+  rankingActive = true;
+  setRankingUI(true);
+
+  try {
+    await rankCandidates(toRank, jd);
+  } catch(e) {
+    showToast('Ranking failed: ' + e.message, 'error');
+  } finally {
+    setRankingUI(false);
+  }
+
+  // Sort filtered by score
+  document.getElementById('sortField').value = 'score_desc';
+  applyFilters();
+  updateStats();
+  showToast(`Ranking complete!`, 'success');
+}
+
+function setRankingUI(active) {
+  const btn = document.getElementById('rankBtn');
+  const status = document.getElementById('jdStatus');
+  btn.disabled = active;
+  btn.innerHTML = active
+    ? `<span class="spinner"></span> Ranking...`
+    : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Rank with AI + Resumes`;
+  status.style.display = active ? 'flex' : 'none';
+}
+
+function setProgress(pct, text) {
+  document.getElementById('jdBar').style.width = pct + '%';
+  document.getElementById('jdStatusText').textContent = text;
+  document.getElementById('jdPct').textContent = pct + '%';
+}
+
+// Core ranking pipeline
+async function rankCandidates(candidates, jd) {
+  const total = candidates.length;
+
+  // Step 1: Quick field-based pre-scoring (no API needed, instant)
+  setProgress(5, `Pre-scoring ${total} candidates by form data...`);
+  // Initialize scores to 0
+  candidates.forEach(c => { c.score = 0; c.score_reason = 'Pending...'; c.resume_text = null; });
+
+  // Step 2: Fetch resumes in parallel batches
+  setProgress(10, `Fetching ${total} resumes from Google Drive...`);
+  const resumeCandidates = candidates.filter(c => c.resume && c.resume.trim());
+  const noResume = candidates.filter(c => !c.resume || !c.resume.trim());
+
+  if (resumeCandidates.length > 0) {
+    await fetchResumesInBatches(resumeCandidates, total);
+  }
+
+  // Step 3: AI ranking — send batches to backend
+  setProgress(50, `AI ranking ${total} candidates...`);
+  await aiRankInBatches(candidates, jd, total);
+}
+
+// Fetch resumes via backend proxy (to handle CORS on Drive)
+async function fetchResumesInBatches(candidates, totalCount) {
+  const BATCH = 8;
+  let done = 0;
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    const batch = candidates.slice(i, i+BATCH);
+    await Promise.all(batch.map(async c => {
+      try {
+        const res = await fetch(`${API_BASE}/api/fetch-resume`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ url: c.resume }),
+          signal: AbortSignal.timeout(15000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          c.resume_text = data.text || null;
+        }
+      } catch(e) {
+        c.resume_text = null; // Will rank on form data only
+      }
+      done++;
+    }));
+    const pct = 10 + Math.round((done / candidates.length) * 35);
+    setProgress(pct, `Fetched ${done}/${candidates.length} resumes...`);
+  }
+}
+
+// AI ranking in batches
+async function aiRankInBatches(candidates, jd, totalCount) {
+  const BATCH = 20; // rank 20 at a time
+  let done = 0;
+
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    const batch = candidates.slice(i, i+BATCH);
+
+    // Build candidate summaries for the batch
+    const summaries = batch.map((c, idx) => {
+      const fields = [
+        `ID: ${idx}`,
+        `Name: ${c.full_name || 'Unknown'}`,
+        `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
+        `College: ${c.college || '?'}`,
+        `Degree: ${c.degree || '?'}, Year: ${c.year || '?'}`,
+        `Duration Available: ${c.duration || '?'}`,
+        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes' : 'No'}`,
+        `Why Alfaleus: ${(c.why_alfaleus||'').slice(0, 300)}`,
+        `Achievements: ${(c.achievements||'').slice(0, 200)}`,
+        c.resume_text ? `Resume Content:\n${c.resume_text.slice(0, 800)}` : '(No resume fetched — rank on form data only)'
+      ];
+      return fields.join('\n');
+    }).join('\n\n---CANDIDATE---\n\n');
+
+    const prompt = `You are a senior technical recruiter at Alfaleus, a deep-tech startup.
+
+JOB DESCRIPTION:
+${jd}
+
+Rate each candidate 0-100 for fit against the job description above.
+
+IMPORTANT SCORING RULES:
+- If a candidate applied for a DIFFERENT role than what the JD describes, give a maximum score of 20. Note the role mismatch in your reason.
+- Candidates who applied for a MATCHING role should be scored 0-100 based on actual fit.
+- Score based on: technical skills match, project relevance, availability (in-person Hyderabad preferred), year of study, motivation in why-alfaleus response, resume quality.
+
+Return ONLY a JSON array, no other text:
+[{"id":0,"score":72,"reason":"2 sentence reason"}]
+
+CANDIDATES:
+---CANDIDATE---
+${summaries}`;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/rank-candidates`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ prompt }),
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const scores = data.scores || [];
+        scores.forEach(s => {
+          if (s.id >= 0 && s.id < batch.length) {
+            batch[s.id].score = Math.max(0, Math.min(100, Math.round(s.score)));
+            batch[s.id].score_reason = s.reason || '';
+          }
+        });
+      } else {
+        // Fallback: assign neutral score
+        batch.forEach(c => { if (c.score === 0) { c.score = 50; c.score_reason = 'Scored on form data (AI unavailable)'; } });
+      }
+    } catch(e) {
+      batch.forEach(c => { c.score = 40; c.score_reason = 'Ranked on form data (network error)'; });
+    }
+
+    done += batch.length;
+    const pct = 50 + Math.round((done / candidates.length) * 48);
+    setProgress(pct, `Ranked ${done}/${candidates.length} candidates...`);
+  }
+}
+
+function clearRanking() {
+  allCandidates.forEach(c => { c.score = null; c.score_reason = ''; c.resume_text = null; });
+  rankingActive = false;
+  document.getElementById('sortField').value = '';
+  applyFilters();
+  updateStats();
+  showToast('Ranking cleared', 'info');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export CSV
+// ─────────────────────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (filtered.length === 0) { showToast('Nothing to export', 'error'); return; }
+
+  const headers = ['Rank','Score','Score Reason','Full Name','Email','Phone','WhatsApp','Roles','College','Degree','Year','Duration','Can Start','Location','Hyderabad','LinkedIn','Resume','Achievements','Why Alfaleus','Notes','Timestamp'];
+  const rows = filtered.map((c, i) => [
+    rankingActive && c.score !== null ? (filtered.filter(x => x.score !== null).findIndex(x => x === c) + 1) : i+1,
+    c.score !== null ? c.score : '',
+    c.score_reason || '',
+    c.full_name, c.email, c.phone, c.whatsapp,
+    (c.roles||[]).join('; '),
+    c.college, c.degree, c.year, c.duration, c.start_date, c.location,
+    c.hyderabad_bool ? 'Yes' : 'No',
+    c.linkedin, c.resume, c.achievements, c.why_alfaleus, c.notes, c.timestamp
+  ].map(v => `"${String(v||'').replace(/"/g,'""')}"`));
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `alfaleus_candidates_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utils
+// ─────────────────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showToast(msg, type='info', duration=3500) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transform='translateY(10px)'; t.style.transition='all 0.3s'; setTimeout(()=>t.remove(),300); }, duration);
+}
+</script>
+</body>
+</html>
