@@ -39,6 +39,7 @@
       min-height: 100vh;
       font-size: 14px;
       line-height: 1.5;
+      overflow-x: hidden;
     }
     body::before {
       content:'';
@@ -49,7 +50,7 @@
     }
 
     /* ── Layout ─────────────────────────────────────────────────────────────── */
-    .page { max-width: 1600px; margin: 0 auto; padding: 32px 24px 80px; position: relative; z-index: 1; }
+    .page { max-width: 1600px; margin: 0 auto; padding: 24px 16px 80px; position: relative; z-index: 1; }
 
     /* ── Header ─────────────────────────────────────────────────────────────── */
     .header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
@@ -165,14 +166,32 @@
     /* ── Table ───────────────────────────────────────────────────────────────── */
     .table-wrap {
       background:var(--s1); border:1px solid var(--border); border-radius:var(--radius-lg);
-      overflow:hidden; margin-bottom:16px;
+      overflow:hidden; margin-bottom:16px; width:100%;
     }
-    .table-scroll { overflow-x:auto; }
-    table { width:100%; border-collapse:collapse; font-size:12px; }
+    .table-scroll { overflow-x:hidden; width:100%; }
+    table { width:100%; border-collapse:collapse; font-size:11px; table-layout:fixed; }
+
+    /* Column widths — fixed layout so nothing blows out */
+    thead th:nth-child(1)  { width:44px; }   /* Rank */
+    thead th:nth-child(2)  { width:52px; }   /* Score */
+    thead th:nth-child(3)  { width:13%; }    /* Name */
+    thead th:nth-child(4)  { width:18%; }    /* Role(s) */
+    thead th:nth-child(5)  { width:11%; }    /* College */
+    thead th:nth-child(6)  { width:52px; }   /* Year */
+    thead th:nth-child(7)  { width:7%; }     /* Duration */
+    thead th:nth-child(8)  { width:7%; }     /* Location */
+    thead th:nth-child(9)  { width:44px; }   /* HYD */
+    thead th:nth-child(10) { width:56px; }   /* Resume */
+    thead th:nth-child(11) { width:56px; }   /* LinkedIn */
+    thead th:nth-child(12) { width:13%; }    /* Email */
+    thead th:nth-child(13) { width:90px; }   /* Phone */
+    thead th:nth-child(14) { width:88px; }   /* Submitted */
+
     thead th {
-      background:var(--s2); color:var(--text2); font-size:10px; text-transform:uppercase;
-      letter-spacing:1px; font-weight:600; padding:10px 14px; text-align:left;
-      white-space:nowrap; border-bottom:1px solid var(--border); position:sticky; top:0;
+      background:var(--s2); color:var(--text2); font-size:9px; text-transform:uppercase;
+      letter-spacing:0.8px; font-weight:600; padding:8px 8px; text-align:left;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      border-bottom:1px solid var(--border); position:sticky; top:0;
       cursor:pointer; user-select:none; transition:color 0.15s;
     }
     thead th:hover { color:var(--text); }
@@ -183,21 +202,24 @@
     tbody tr { border-bottom:1px solid var(--border); transition:background 0.1s; }
     tbody tr:last-child { border-bottom:none; }
     tbody tr:hover { background:var(--s2); }
-    tbody td { padding:10px 14px; color:var(--text); vertical-align:top; max-width:260px; }
+    tbody td { padding:8px 8px; color:var(--text); vertical-align:top; overflow:hidden; }
 
-    .cell-name { font-weight:600; color:var(--text); font-size:13px; }
-    .cell-email { color:var(--text2); font-family:var(--mono); font-size:11px; }
-    .cell-phone { color:var(--text2); font-family:var(--mono); font-size:11px; }
+    .cell-name { font-weight:600; color:var(--text); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .cell-email { color:var(--text2); font-family:var(--mono); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .cell-phone { color:var(--text2); font-family:var(--mono); font-size:10px; }
     .cell-role { }
     .role-tag {
-      display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:600;
+      display:inline-block; padding:2px 6px; border-radius:4px; font-size:9px; font-weight:600;
       background:rgba(59,130,246,0.12); color:var(--accent); border:1px solid rgba(59,130,246,0.2);
-      white-space:nowrap;
+      white-space:normal; word-break:break-word; line-height:1.4; margin-bottom:2px;
     }
-    .cell-college { color:var(--text2); font-size:11px; }
-    .cell-location { color:var(--text3); font-size:11px; }
-    .cell-avail { color:var(--text2); font-size:11px; }
-    .cell-text-long { max-width:280px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; color:var(--text2); font-size:11px; line-height:1.5; }
+    /* Role cell: allow wrapping, don't overflow */
+    td:nth-child(4) { overflow:visible; }
+    .roles-wrap { display:flex; flex-wrap:wrap; gap:3px; }
+    .cell-college { color:var(--text2); font-size:10px; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .cell-location { color:var(--text3); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cell-avail { color:var(--text2); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cell-text-long { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; color:var(--text2); font-size:10px; line-height:1.5; }
 
     a.cell-link { color:var(--accent); font-size:11px; text-decoration:none; font-family:var(--mono); }
     a.cell-link:hover { text-decoration:underline; }
@@ -1052,7 +1074,9 @@ function renderTable() {
     const globalRank = rankingActive && c.score !== null ? (filtered.filter(x => x.score !== null).findIndex(x => x === c) + 1) : null;
     const scoreClass = c.score === null ? 'score-na' : c.score >= 70 ? 'score-high' : c.score >= 45 ? 'score-mid' : 'score-low';
 
-    const rolesHtml = (c.roles||[]).map(r => `<span class="role-tag">${escHtml(r)}</span>`).join(' ') || `<span style="color:var(--text3);font-size:11px">—</span>`;
+    const rolesHtml = (c.roles||[]).length
+      ? `<div class="roles-wrap">${(c.roles||[]).map(r => `<span class="role-tag">${escHtml(r)}</span>`).join('')}</div>`
+      : `<span style="color:var(--text3);font-size:11px">—</span>`;
     const resumeHtml = c.resume
       ? `<div class="resume-link-cell"><a class="cell-link" href="${escHtml(c.resume)}" target="_blank" title="${escHtml(c.resume)}">
           <span class="resume-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> View</span>
@@ -1086,7 +1110,7 @@ function renderTable() {
       <td>${linkedinHtml}</td>
       <td><span class="cell-email">${escHtml(c.email || '—')}</span></td>
       <td><span class="cell-phone">${escHtml(c.phone || '—')}</span></td>
-      <td style="color:var(--text3);font-size:11px;white-space:nowrap">${ts}</td>
+      <td style="color:var(--text3);font-size:10px;">${ts}</td>
     `;
     tbody.appendChild(tr);
   });
