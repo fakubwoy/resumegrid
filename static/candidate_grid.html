@@ -181,8 +181,8 @@
     thead th:nth-child(7)  { width:7%; }     /* Duration */
     thead th:nth-child(8)  { width:7%; }     /* Location */
     thead th:nth-child(9)  { width:44px; }   /* HYD */
-    thead th:nth-child(10) { width:56px; }   /* Resume */
-    thead th:nth-child(11) { width:56px; }   /* LinkedIn */
+    thead th:nth-child(10) { width:72px; }   /* Resume */
+    thead th:nth-child(11) { width:68px; }   /* LinkedIn */
     thead th:nth-child(12) { width:13%; }    /* Email */
     thead th:nth-child(13) { width:90px; }   /* Phone */
     thead th:nth-child(14) { width:88px; }   /* Submitted */
@@ -322,10 +322,11 @@
     }
     .col-toggle-btn.on { background:rgba(59,130,246,0.1); border-color:rgba(59,130,246,0.3); color:var(--accent); }
 
-    .resume-link-cell { display:flex; align-items:center; gap:6px; }
+    .resume-link-cell { display:flex; align-items:center; }
     .resume-badge {
-      display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px;
-      font-size:10px; background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.2); color:var(--green);
+      display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border-radius:4px;
+      font-size:10px; font-weight:600; white-space:nowrap;
+      background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.2); color:var(--green);
     }
     .no-resume { font-size:10px; color:var(--text3); }
 
@@ -1098,7 +1099,6 @@ function renderTable() {
       <td><div class="${scoreClass} score-badge">${c.score !== null ? c.score : '—'}</div></td>
       <td>
         <div class="cell-name">${escHtml(c.full_name || '—')}</div>
-        <div class="cell-email">${escHtml(c.email || '')}</div>
       </td>
       <td>${rolesHtml}</td>
       <td class="cell-college">${escHtml(c.college || '—')}</td>
