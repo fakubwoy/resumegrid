@@ -155,7 +155,7 @@ CANONICAL_FIELDS = {
 }
 
 COLUMN_ORDER = [
-    "match_score", "match_reason",
+    "match_score", "match_reason", "skill_depth",
     "full_name", "email", "phone", "location", "linkedin", "github", "portfolio",
     "current_title", "years_of_experience", "summary",
     "skills", "programming_languages", "frameworks",
@@ -179,7 +179,7 @@ COLUMN_HEADERS = {
     "certifications": "Certifications", "languages_spoken": "Languages Spoken",
     "projects": "Key Projects", "achievements": "Achievements/Awards",
     "source_file": "Source File", "last_ctc": "Last CTC", "current_status": "Current Status",
-    "match_score": "Match Score (/100)", "match_reason": "Match Reason",
+    "match_score": "Match Score (/100)", "match_reason": "Match Reason", "skill_depth": "Skill Depth (per JD)",
     "duplicate_of": "Duplicate Of"
 }
 
@@ -541,24 +541,44 @@ CANDIDATE'S APPLIED ROLE: {applied_role}
 
 CRITICAL: If the candidate applied for a role that is clearly different from the role described in the JD above (e.g., they applied for "Full Stack Developer" but this JD is for "Entrepreneur in Residence"), cap the score at 20 and note the mismatch in your reason. Only score 21-100 if the applied role is reasonably aligned with this JD.
 """
-    return f"""You are a technical recruiter. Score this resume against the job description below.
+    return f"""You are a senior technical recruiter evaluating a candidate against a job description.
 
 JOB DESCRIPTION:
-{job_description[:2000]}
+{job_description[:4000]}
 {role_instruction}
-Score the candidate from 0 to 100 based on:
-- Role alignment — is the candidate's applied role relevant to this JD? (if not, cap at 20)
+
+SCORING INSTRUCTIONS:
+
+Step 1 - Score the candidate 0-100:
+- Role alignment: is the candidate's applied role relevant to this JD? (if not, cap at 20)
 - Skills & technology match (35 points of 80 remaining)
 - Years of experience relevance (20 points)
 - Role/title alignment (15 points)
 - Education & certifications (10 points)
 
-Return ONLY a JSON object with exactly these two fields:
+Step 2 - For each skill/technology explicitly required or strongly implied by the JD, infer the
+candidate's depth from HOW they describe using it in the resume, not just whether the word appears.
+
+Depth levels:
+- "expert"       : led projects, architected systems, mentored others, 3+ years direct use, or measurable impact described
+- "intermediate" : used independently on real projects, 1-3 years, clear hands-on usage described
+- "beginner"     : mentioned briefly, listed without context, coursework/academic only, or < 1 year
+- "not found"    : not mentioned or no evidence at all
+
+Be strict. "Familiar with X" or listing X in a skills section with no project evidence = beginner at best.
+If a skill is not mentioned at all, mark it "not found" - do not assume.
+
+Return ONLY a JSON object with exactly these three fields:
 {{
   "match_score": <integer 0-100>,
-  "match_reason": "<one sentence summary of fit>"
+  "match_reason": "<2-3 sentence summary: overall fit, strongest signals, and any key gaps>",
+  "skill_depth": {{
+    "<skill_name>": "<expert|intermediate|beginner|not found>",
+    "...more skills...": "..."
+  }}
 }}
 
+Include only the top 8-12 most important skills from the JD in skill_depth.
 No markdown, no explanation, just the JSON."""
 
 
@@ -592,7 +612,7 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
     t0 = time.monotonic()
     logger.info("AI extracting '%s'", filename)
 
-    prompt = f"Resume text:\n\n{text[:12000]}\n\n{get_extraction_prompt()}"
+    prompt = f"Resume text:\n\n{text[:20000]}\n\n{get_extraction_prompt()}"
     raw, provider_used = call_ai(prompt)
 
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
@@ -618,18 +638,28 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
     # JD scoring (also via AI, fully parallel)
     if job_description:
         try:
-            summary_parts = []
+            # Build rich context: extracted fields + full raw resume text.
+            # This ensures the scorer sees everything — project descriptions, impact
+            # statements, work history details — not just a 10-field skeleton.
+            extracted_fields = []
             for field in ["full_name", "current_title", "years_of_experience", "skills",
                           "programming_languages", "frameworks", "education_degree",
-                          "certifications", "summary", "companies_worked"]:
+                          "certifications", "summary", "companies_worked",
+                          "most_recent_role", "most_recent_company", "most_recent_duration",
+                          "projects", "achievements", "languages_spoken"]:
                 val = data.get(field)
                 if val:
-                    summary_parts.append(f"{field}: {val}")
-            resume_summary = "\n".join(summary_parts)
+                    extracted_fields.append(f"{field}: {val}")
+            extracted_summary = "\n".join(extracted_fields)
+            # Full raw resume text (capped at 15k) so no detail is lost during scoring
+            full_resume_context = (
+                f"--- EXTRACTED FIELDS ---\n{extracted_summary}\n\n"
+                f"--- FULL RESUME TEXT ---\n{text[:15000]}"
+            )
             # Pass the candidate's current_title as the "applied role" so the model
             # can detect role mismatches (e.g. a fullstack dev ranked against an EIR JD)
             applied_role = data.get("current_title") or data.get("most_recent_role")
-            score_prompt = f"RESUME DATA:\n{resume_summary}\n\n{get_scoring_prompt(job_description, applied_role=applied_role)}"
+            score_prompt = f"RESUME DATA:\n{full_resume_context}\n\n{get_scoring_prompt(job_description, applied_role=applied_role)}"
             score_raw, _ = call_ai(score_prompt, is_scoring=True)
             score_raw = re.sub(r"^```[a-z]*\n?", "", score_raw)
             score_raw = re.sub(r"\n?```$", "", score_raw)
@@ -639,7 +669,18 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
                 score = max(0, min(100, int(parsed.get("match_score", 0))))
                 data["match_score"] = str(score)
                 data["match_reason"] = str(parsed.get("match_reason", ""))
-                logger.info("'%s' — match score: %s/100", filename, score)
+                # Serialize skill_depth dict into a readable string for Excel/grid
+                skill_depth = parsed.get("skill_depth", {})
+                if isinstance(skill_depth, dict) and skill_depth:
+                    depth_lines = []
+                    order = ["expert", "intermediate", "beginner", "not found"]
+                    for level in order:
+                        skills_at_level = [k for k, v in skill_depth.items() if str(v).lower() == level]
+                        if skills_at_level:
+                            emoji = {"expert": "\u2605\u2605\u2605", "intermediate": "\u2605\u2605\u2606", "beginner": "\u2605\u2606\u2606", "not found": "\u2717"}[level]
+                            depth_lines.append(f"{emoji} {level.title()}: {', '.join(skills_at_level)}")
+                    data["skill_depth"] = "\n".join(depth_lines)
+                logger.info("'%s' \u2014 match score: %s/100 | skill_depth: %d skills rated", filename, score, len(skill_depth))
         except Exception as score_err:
             logger.warning("Scoring skipped for '%s': %s", filename, score_err)
 
