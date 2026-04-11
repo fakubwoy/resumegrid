@@ -91,7 +91,7 @@ def call_ai(text, is_scoring=False):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.0,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
         },
         "system_instruction": {"parts": [{"text": system}]},

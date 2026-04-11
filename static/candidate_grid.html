@@ -1513,7 +1513,7 @@ async function fetchResumesInBatches(candidates, totalCount) {
 
 // AI ranking in batches
 async function aiRankInBatches(candidates, jd, totalCount) {
-  const BATCH = 20; // rank 20 at a time
+  const BATCH = 10; // rank 10 at a time — keeps response within token limits
   let done = 0;
 
   for (let i = 0; i < candidates.length; i += BATCH) {
