@@ -1245,10 +1245,12 @@ def api_rank_candidates():
         scores = []
         for item in scores_raw:
             if isinstance(item, dict) and "id" in item and "score" in item:
+                skill_depth = item.get("skill_depth")
                 scores.append({
-                    "id":     int(item["id"]),
-                    "score":  max(0, min(100, int(float(item.get("score", 50))))),
-                    "reason": str(item.get("reason", ""))[:300],
+                    "id":          int(item["id"]),
+                    "score":       max(0, min(100, int(float(item.get("score", 50))))),
+                    "reason":      str(item.get("reason", ""))[:300],
+                    "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
                 })
 
         return jsonify({"scores": scores, "provider": provider})

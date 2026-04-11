@@ -1609,7 +1609,9 @@ FAIRNESS RULES:
 - Candidates from less-known colleges with strong projects should score the same as IIT/NIT candidates with weak ones
 
 Return ONLY a JSON array, no other text:
-[{"id":0,"score":72,"reason":"2 sentence reason covering top strengths and key gaps"}]
+[{"id":0,"score":72,"reason":"2 sentence reason covering top strengths and key gaps","skill_depth":{"Python":"expert","SQL":"intermediate","React":"beginner"}}]
+
+For skill_depth: include the 6–10 most important skills/qualities from the JD. Rate each as exactly one of: "expert", "intermediate", "beginner", or "not found". Base ratings on how the candidate describes using the skill — not just whether it is mentioned.
 
 CANDIDATES:
 ---CANDIDATE---
