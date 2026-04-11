@@ -1371,6 +1371,7 @@ def api_download_ranked_excel():
         ("rank",          "Rank",               8),
         ("score",         "Score (/100)",        10),
         ("score_reason",  "Score Reason",        45),
+        ("skill_depth",   "Skill Depth (per JD)", 38),
         ("full_name",     "Full Name",           22),
         ("email",         "Email",               28),
         ("phone",         "Phone",               16),
@@ -1429,6 +1430,26 @@ def api_download_ranked_excel():
                 except (ValueError, TypeError):
                     cell.value = score_val
                     cell.font  = cell_font
+
+            elif key == "skill_depth":
+                depth = cand.get("skill_depth")
+                if isinstance(depth, dict):
+                    # Format as clean text: "Expert: Python, Django | Intermediate: Docker | Beginner: Redis"
+                    order = ["expert", "intermediate", "beginner", "not found"]
+                    parts = []
+                    for level in order:
+                        skills = [k for k, v in depth.items() if str(v).lower() == level]
+                        if skills:
+                            parts.append(f"{level.title()}: {', '.join(skills)}")
+                    cell.value = " | ".join(parts) if parts else ""
+                elif isinstance(depth, str):
+                    # Already a formatted string — strip star emojis for cleaner Excel
+                    import re as _re
+                    clean = _re.sub(r'[★☆✗]+ ?', '', depth).strip()
+                    cell.value = clean
+                else:
+                    cell.value = ""
+                cell.font = cell_font
 
             elif key == "roles":
                 roles = cand.get("roles") or []

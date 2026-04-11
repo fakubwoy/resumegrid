@@ -287,6 +287,30 @@
     .drawer-score-val { font-family:var(--mono); font-size:36px; font-weight:700; }
     .drawer-score-reason { font-size:12px; color:var(--text2); line-height:1.5; flex:1; }
 
+    /* ── Skill depth section ─────────────────────────────────────────────────── */
+    .skill-depth-grid { display:flex; flex-direction:column; gap:6px; }
+    .skill-depth-row { display:flex; align-items:center; gap:8px; }
+    .skill-depth-name { font-size:11px; color:var(--text); flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .skill-bar-wrap { width:100px; height:6px; background:var(--s3); border-radius:3px; flex-shrink:0; }
+    .skill-bar { height:100%; border-radius:3px; transition:width 0.4s ease; }
+    .skill-bar.expert       { width:100%; background:var(--green); }
+    .skill-bar.intermediate { width:66%;  background:var(--accent); }
+    .skill-bar.beginner     { width:33%;  background:var(--amber); }
+    .skill-bar.not-found    { width:8%;   background:var(--border2); }
+    .skill-depth-label { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; width:72px; flex-shrink:0; }
+    .skill-depth-label.expert       { color:var(--green); }
+    .skill-depth-label.intermediate { color:var(--accent); }
+    .skill-depth-label.beginner     { color:var(--amber); }
+    .skill-depth-label.not-found    { color:var(--text3); }
+    /* Mini depth dots in table score cell */
+    .depth-dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
+    .depth-dot.expert       { background:var(--green); }
+    .depth-dot.intermediate { background:var(--accent); }
+    .depth-dot.beginner     { background:var(--amber); }
+    .depth-dot.not-found    { background:var(--border2); }
+    .score-cell-wrap { display:flex; flex-direction:column; align-items:center; gap:4px; }
+    .depth-dots-row  { display:flex; gap:2px; flex-wrap:wrap; justify-content:center; max-width:44px; }
+
     /* ── Toast ───────────────────────────────────────────────────────────────── */
     .toast-container { position:fixed; bottom:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:8px; }
     .toast {
@@ -1111,7 +1135,12 @@ function renderTable() {
     tr.onclick = () => openDrawer(c);
     tr.innerHTML = `
       <td class="rank-col"><span class="rank-num">${globalRank !== null ? '#' + globalRank : (start + i + 1)}</span></td>
-      <td><div class="${scoreClass} score-badge">${c.score !== null ? c.score : '—'}</div></td>
+      <td>
+        <div class="score-cell-wrap">
+          <div class="${scoreClass} score-badge">${c.score !== null ? c.score : '—'}</div>
+          ${c.skill_depth ? `<div class="depth-dots-row">${Object.entries(c.skill_depth).slice(0,8).map(([,v]) => `<span class="depth-dot ${v.toLowerCase().replace(/ /g,'-')}" title="${v}"></span>`).join('')}</div>` : ''}
+        </div>
+      </td>
       <td>
         <div class="cell-name">${escHtml(c.full_name || '—')}</div>
       </td>
@@ -1198,13 +1227,33 @@ function openDrawer(c) {
 
   let scoreSection = '';
   if (c.score !== null) {
+    // Build skill depth rows if available
+    let depthHtml = '';
+    if (c.skill_depth && typeof c.skill_depth === 'object') {
+      const order = ['expert', 'intermediate', 'beginner', 'not found'];
+      const rows = Object.entries(c.skill_depth)
+        .sort((a, b) => order.indexOf(a[1].toLowerCase()) - order.indexOf(b[1].toLowerCase()))
+        .map(([skill, level]) => {
+          const cls = level.toLowerCase().replace(/ /g, '-');
+          return `<div class="skill-depth-row">
+            <div class="skill-depth-name">${escHtml(skill)}</div>
+            <div class="skill-bar-wrap"><div class="skill-bar ${cls}"></div></div>
+            <div class="skill-depth-label ${cls}">${escHtml(level)}</div>
+          </div>`;
+        }).join('');
+      depthHtml = `<div class="drawer-section">
+        <div class="drawer-section-title">Skill Depth — per JD</div>
+        <div class="skill-depth-grid">${rows}</div>
+      </div>`;
+    }
+
     scoreSection = `<div class="drawer-score-row">
       <div>
         <div class="drawer-score-val ${scoreClass === 'score-high' ? '' : scoreClass === 'score-mid' ? 'style="color:var(--amber)"' : 'style="color:var(--red)"'}" style="color:${c.score>=70?'var(--green)':c.score>=45?'var(--amber)':'var(--red)'}">${c.score}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:2px">/ 100</div>
       </div>
       <div class="drawer-score-reason">${escHtml(c.score_reason || 'No reason provided')}</div>
-    </div>`;
+    </div>${depthHtml}`;
   }
 
   document.getElementById('drawerContent').innerHTML = `
@@ -1581,6 +1630,7 @@ ${summaries}`;
           if (s.id >= 0 && s.id < batch.length) {
             batch[s.id].score = Math.max(0, Math.min(100, Math.round(s.score)));
             batch[s.id].score_reason = s.reason || '';
+            batch[s.id].skill_depth = s.skill_depth || null; // object: {skill: level}
           }
         });
       } else {
@@ -1598,7 +1648,7 @@ ${summaries}`;
 }
 
 function clearRanking() {
-  allCandidates.forEach(c => { c.score = null; c.score_reason = ''; c.resume_text = null; });
+  allCandidates.forEach(c => { c.score = null; c.score_reason = ''; c.skill_depth = null; c.resume_text = null; });
   rankingActive = false;
   document.getElementById('sortField').value = '';
   document.getElementById('downloadRankedBtn').style.display = 'none';
