@@ -15,14 +15,14 @@ import os
 bind                 = f"0.0.0.0:{os.environ.get('PORT', '5000')}"
 worker_class         = "gevent"
 workers              = 1           # gevent handles concurrency; 1 worker is enough
-worker_connections   = 50          # reduced from 100 — resume uploads are sequential
+worker_connections   = 20          # reduced from 50 — sequential uploads don't need more
 timeout              = 300
-keepalive            = 5
+keepalive            = 2           # reduced from 5 — fewer idle keep-alive sockets
 loglevel             = "info"
 
-# Recycle the worker periodically to free accumulated memory from PDF processing
-max_requests         = 500
-max_requests_jitter  = 50          # randomise so all workers don't restart together
+# Recycle worker more aggressively to free PDF/openpyxl memory buildup
+max_requests         = 200         # was 500 — recycles sooner after batch processing
+max_requests_jitter  = 25          # was 50
 
 # Load app code once, then fork — saves ~30-50 MB per-worker import overhead
 preload_app          = True

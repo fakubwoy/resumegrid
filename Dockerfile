@@ -63,13 +63,17 @@ COPY whatsapp-service/server.js ./whatsapp-service/
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# ── Reduce glibc memory arena count — prevents RSS bloat from pdfplumber/openpyxl ──
+# Default is 8 arenas; 2 is enough for a single-worker gevent server
+ENV MALLOC_ARENA_MAX=2
+
 # ── WhatsApp service internal port ───────────────────────────────
 ENV WA_PORT=3001
 ENV WA_SERVICE_URL=http://localhost:3001
 
-# ── Idle timeout: destroy Chromium after 10 min of no sends ──────
-#    (was 15 min default — reduces RAM waste for inactive sessions)
-ENV WA_IDLE_TIMEOUT_MS=600000
+# ── Idle timeout: destroy Chromium after 5 min of no sends ───────
+#    (was 10 min — Chromium holds ~150-200 MB; free it sooner)
+ENV WA_IDLE_TIMEOUT_MS=300000
 
 # ── App source ────────────────────────────────────────────────────
 COPY app.py .

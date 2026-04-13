@@ -50,8 +50,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 PRIMARY_PROVIDER       = "gemini"
-MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "20"))
-MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "8"))
+MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "5"))   # was 20 — reduces thread pool RSS
+MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "3"))  # was 8 — gevent handles concurrency
 
 logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
 logger.info("AI provider: gemini (%s) | concurrent calls: %d", GEMINI_MODEL, MAX_CONCURRENT_AI)
@@ -1554,9 +1554,9 @@ def _spawn_wa_service():
         _wa_proc = subprocess.Popen(
             [
                 "node",
-                "--max-old-space-size=192",
+                "--max-old-space-size=96",   # was 192 — WA service only does JSON, doesn't need a large heap
                 "--expose-gc",
-                "--gc-interval=100",
+                "--gc-interval=50",          # more frequent GC at lower cost
                 node_script,
             ],
             stdout=subprocess.DEVNULL,
