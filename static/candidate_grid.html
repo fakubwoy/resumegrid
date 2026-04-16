@@ -1734,7 +1734,7 @@ async function fetchResumesInBatches(candidates, totalCount) {
 
 // AI ranking in batches
 async function aiRankInBatches(candidates, jd, totalCount) {
-  const BATCH = 10; // rank 10 at a time — keeps response within token limits
+  const BATCH = 8; // rank 8 at a time — keeps prompt within token limits, especially with long resumes
   let done = 0;
 
   for (let i = 0; i < candidates.length; i += BATCH) {
@@ -1783,96 +1783,114 @@ async function aiRankInBatches(candidates, jd, totalCount) {
       return lines.join('\n');
     }).join('\n\n---CANDIDATE---\n\n');
 
-    const prompt = `You are a senior recruiter evaluating candidates for a specific role. Be DECISIVE and CONSISTENT — if you ranked the same candidate twice, the score must not vary by more than 3 points.
+    // Extract the specific skills/tech required by this JD for the prompt header
+    const prompt = `You are a senior technical recruiter evaluating candidates against a specific Job Description. Be DECISIVE and CONSISTENT — if you ranked the same candidate twice, the score must not vary by more than 3 points.
 
 JOB DESCRIPTION:
 ${jd}
 
-Rate each candidate 0–100 for fit. Use the SCORING ANCHORS below to lock in your scores — these prevent drift between runs.
+════════════════════════════════════════
+CRITICAL SCORING PHILOSOPHY:
+════════════════════════════════════════
+Score candidates on how well they match THIS JD's specific skills and requirements — NOT on their job title or applied role category.
 
-═══════════════════════════════════════
+A candidate who applied as "Full Stack Developer" but has strong experience in every technology listed in this JD should score HIGH. A candidate with a matching job title but weak skills in the JD's requirements should score LOW.
+
+The JD skills are the PRIMARY signal. Job title / applied role is irrelevant to scoring.
+
+If the JD mentions a niche technology (e.g. VR/AR, blockchain, embedded systems, etc.) and a candidate has direct experience in it — that is a STRONG match regardless of what role they applied for.
+
+════════════════════════════════════════
 SCORING ANCHORS (use these as fixed reference points):
-═══════════════════════════════════════
-90–100 → Near-perfect fit. Has direct, proven experience in this exact role. Strong portfolio/resume showing real results. Enthusiastic and specific motivation.
-75–89  → Strong candidate. Solid relevant skills, good project quality, may have 1–2 gaps but compensates with strength elsewhere.
-60–74  → Decent candidate. Relevant skills present but shallow or academic only. Generic motivation or minor logistics issues.
-40–59  → Weak fit. Skills are partially relevant but mostly adjacent. Limited project evidence. Vague answers.
-20–39  → Poor fit. Background is mostly unrelated. Little to no evidence of relevant skills.
-0–19   → No fit. Completely unrelated background.
+════════════════════════════════════════
+90–100 → Near-perfect fit. Has direct, proven experience with the specific technologies and responsibilities in THIS JD. Strong portfolio/resume showing real results in these areas.
+75–89  → Strong candidate. Covers most of the JD's key skills with real project evidence. May have 1–2 gaps but compensates with demonstrated depth elsewhere.
+60–74  → Decent candidate. Has relevant foundational skills but coverage is shallow, academic-only, or missing 2–3 key requirements.
+40–59  → Weak fit. Some transferable skills present but most of the JD's specific requirements are absent or undemonstrated.
+20–39  → Poor fit. Background overlaps minimally with JD requirements.
+0–19   → No fit. Resume/form shows essentially no coverage of JD skills.
 
-COMMIT to a score band first, then pick the specific number. Do NOT give everyone 65–75 — spread scores across the full range based on actual quality differences.
+COMMIT to a score band first, then pick the specific number. Do NOT cluster everyone at 65–75 — spread scores based on actual skill coverage.
 
-═══════════════════════════════════════
+════════════════════════════════════════
 SCORING FRAMEWORK (total 100 points):
-═══════════════════════════════════════
+════════════════════════════════════════
 
-1. ROLE ALIGNMENT & RELEVANCE (25 pts)
-   - How directly does this candidate's background map to the role's core responsibilities?
-   - Completely unrelated background → cap at 20 total. Partial overlap → partial credit.
+1. JD SKILLS MATCH (45 pts) ← THIS IS THE MOST IMPORTANT DIMENSION
+   - Extract the 6–8 most important technical skills/tools/technologies from the JD.
+   - For each skill, rate depth: expert / intermediate / beginner / not found.
+   - Score: expert on a key skill = full credit | intermediate = ~60% | beginner = ~25% | not found = 0
+   - Total score MUST be consistent with skill_depth ratings. "Not found" on most key skills = cannot exceed 50.
+   - BONUS: If the JD specifies a niche technology and candidate has hands-on project evidence of it, give full expert credit even if their job title doesn't match.
 
-2. SKILLS & HANDS-ON EXPERIENCE (30 pts)
-   - Rate each candidate's skill_depth for the 6–8 most critical skills in the JD.
-   - Then use those ratings to drive this dimension's score:
-     * "expert" on a core skill = full credit for that skill
-     * "intermediate" = ~60% credit
-     * "beginner" or "not found" on an essential skill = significant deduction
-   - Your total score MUST be consistent with skill_depth ratings. A candidate rated "not found" on most key skills CANNOT score above 50 overall.
+2. PROJECT & PORTFOLIO QUALITY (25 pts)
+   - Real work shown that uses JD-relevant skills (client projects, portfolio, measurable outcomes) > academic projects > courses only.
+   - Specific and concrete > vague and generic. Does the work demonstrated match what the JD actually needs?
 
-3. PROJECT & PORTFOLIO QUALITY (20 pts)
-   - Real work shown (client projects, portfolio, measurable outcomes) > academic projects > courses only.
-   - Specific and concrete > vague and generic. Scores here directly affect how much you trust the skills claim.
-
-4. MOTIVATION & COMMUNICATION QUALITY (15 pts)
+3. MOTIVATION & COMMUNICATION QUALITY (15 pts)
    - "Why this company/role" response: specific and genuine = 10–15 pts. Generic or ChatGPT-sounding = 2–5 pts.
    - Written communication quality is itself a signal.
 
-5. AVAILABILITY & LOGISTICS (10 pts)
-   - Hyderabad in-person availability preferred (+5 if yes).
-   - Availability duration and start date.
+4. AVAILABILITY & LOGISTICS (15 pts)
+   - Hyderabad in-person availability preferred (+7 if yes).
+   - Availability duration and start date match what the role needs.
 
-═══════════════════════════════════════
+════════════════════════════════════════
 CONSISTENCY RULES:
-═══════════════════════════════════════
-- Score ONLY on merit — no college prestige bias, no gender bias.
-- A strong project portfolio with no resume can still score 65+.
-- A resume with only course listings and a generic "why" scores below 55.
-- If resume text is unavailable, evaluate on form data only — note this.
-- SPREAD your scores. If the batch has varied quality, scores should vary too (e.g. range from 35 to 85, not all 60–70).
+════════════════════════════════════════
+- Score ONLY on JD skill match and merit — no college prestige bias, no gender bias, no job title bias.
+- A strong project portfolio with JD-relevant work and no resume can still score 65+.
+- A resume with only course listings and no demonstrated projects scores below 50.
+- If resume text is unavailable, evaluate on form data only — note this in the reason.
+- SPREAD your scores. If the batch has varied quality, scores should vary too (e.g. range from 30 to 85, not all 60–70).
 - Re-running this same batch should produce scores within ±3 of each other. Be decisive.
 
 Return ONLY a JSON array, no other text:
-[{"id":0,"score":72,"reason":"2 sentence reason covering top strengths and key gaps","skill_depth":{"Content Strategy":"expert","Instagram Trends":"intermediate","Video Direction":"beginner"}}]
+[{"id":0,"score":72,"reason":"2 sentence reason covering top JD skill matches and key gaps","skill_depth":{"React":"expert","Three.js":"intermediate","WebXR":"not found"}}]
 
-For skill_depth: include the 6–8 most important skills for THIS specific role. Rate each as exactly one of: "expert", "intermediate", "beginner", or "not found". Base on demonstrated use — not just mention.
+For skill_depth: include the 6–8 most important skills extracted FROM THIS SPECIFIC JD. Rate each as exactly one of: "expert", "intermediate", "beginner", or "not found". Base rating on demonstrated use in projects/work — not just listing the word on a resume.
 
 CANDIDATES:
 ---CANDIDATE---
 ${summaries}`;
 
-    try {
-      const res = await fetch(`${API_BASE}/api/rank-candidates`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ prompt }),
-        signal: AbortSignal.timeout(60000)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const scores = data.scores || [];
-        scores.forEach(s => {
-          if (s.id >= 0 && s.id < batch.length) {
-            batch[s.id].score = Math.max(0, Math.min(100, Math.round(s.score)));
-            batch[s.id].score_reason = s.reason || '';
-            batch[s.id].skill_depth = s.skill_depth || null; // object: {skill: level}
-          }
+    let ranked = false;
+    for (let attempt = 0; attempt < 2 && !ranked; attempt++) {
+      try {
+        const res = await fetch(`${API_BASE}/api/rank-candidates`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ prompt }),
+          signal: AbortSignal.timeout(120000)  // 2 min — large resume batches need time
         });
-      } else {
-        // Fallback: assign neutral score
-        batch.forEach(c => { if (c.score === 0) { c.score = 50; c.score_reason = 'Scored on form data (AI unavailable)'; } });
+
+        if (res.ok) {
+          const data = await res.json();
+          const scores = data.scores || [];
+          scores.forEach(s => {
+            if (s.id >= 0 && s.id < batch.length) {
+              batch[s.id].score = Math.max(0, Math.min(100, Math.round(s.score)));
+              batch[s.id].score_reason = s.reason || '';
+              batch[s.id].skill_depth = s.skill_depth || null;
+            }
+          });
+          ranked = true;
+        } else if (attempt === 0) {
+          // Server error — wait 3s then retry
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          batch.forEach(c => { if (c.score === 0) { c.score = 50; c.score_reason = 'Scored on form data (AI unavailable)'; } });
+          ranked = true;
+        }
+      } catch(e) {
+        if (attempt === 0) {
+          // First attempt failed (timeout/network) — retry once after a short wait
+          await new Promise(r => setTimeout(r, 4000));
+        } else {
+          batch.forEach(c => { c.score = 40; c.score_reason = 'Ranked on form data (network error — retry failed)'; });
+          ranked = true;
+        }
       }
-    } catch(e) {
-      batch.forEach(c => { c.score = 40; c.score_reason = 'Ranked on form data (network error)'; });
     }
 
     done += batch.length;
