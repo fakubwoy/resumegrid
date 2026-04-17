@@ -534,51 +534,68 @@ CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explana
 
 
 def get_scoring_prompt(job_description, applied_role=None):
-    role_instruction = ""
-    if applied_role:
-        role_instruction = f"""
-CANDIDATE'S APPLIED ROLE: {applied_role}
-
-CRITICAL: If the candidate applied for a role that is clearly different from the role described in the JD above (e.g., they applied for "Full Stack Developer" but this JD is for "Entrepreneur in Residence"), cap the score at 20 and note the mismatch in your reason. Only score 21-100 if the applied role is reasonably aligned with this JD.
-"""
-    return f"""You are a senior technical recruiter evaluating a candidate against a job description.
+    return f"""You are a strict technical recruiter. Your ONLY job is to measure how well this candidate's
+demonstrated skills and experience match the specific requirements in the JD below.
 
 JOB DESCRIPTION:
 {job_description[:4000]}
-{role_instruction}
 
-SCORING INSTRUCTIONS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SCORING RULES — READ CAREFULLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Step 1 - Score the candidate 0-100:
-- Role alignment: is the candidate's applied role relevant to this JD? (if not, cap at 20)
-- Skills & technology match (35 points of 80 remaining)
-- Years of experience relevance (20 points)
-- Role/title alignment (15 points)
-- Education & certifications (10 points)
+The score is determined PURELY by how many JD-required skills and experiences the candidate
+actually demonstrates. NOTHING else contributes to the score.
 
-Step 2 - For each skill/technology explicitly required or strongly implied by the JD, infer the
-candidate's depth from HOW they describe using it in the resume, not just whether the word appears.
+WHAT COUNTS (the only things that raise the score):
+  • Each JD-required skill the candidate has clearly used in real projects → raises score
+  • Directly relevant domain experience (e.g. mobile dev for a mobile JD) → raises score
+  • The more evidence of hands-on use (projects, descriptions, outcomes), the higher it goes
+
+WHAT DOES NOT COUNT (these must NOT raise the score at all):
+  • Being a "good developer" in general
+  • Having strong fullstack / backend / web skills when the JD asks for mobile/IoT/other
+  • Years of experience in an unrelated domain
+  • Education, unless the JD explicitly requires a specific degree
+  • Seniority, communication skills, or soft skills (unless the JD explicitly asks)
+  • The candidate's job title or applied role — titles are IRRELEVANT to the score
+
+SCORE BANDS:
+  90-100 : Has hands-on experience with nearly every JD skill, demonstrated in real projects
+  70-89  : Has most JD-required skills with clear project evidence
+  50-69  : Has some relevant skills but meaningful gaps in JD requirements
+  30-49  : A few JD skills present but most are missing or undemonstrated
+  10-29  : Almost none of the JD-specific skills are present
+  0-9    : None of the JD skills are present at all
+
+STRICTNESS RULES:
+  • Listing a skill without any project/usage evidence = treat as NOT demonstrated
+  • "Familiar with X" or "exposure to X" = NOT demonstrated
+  • Academic coursework on a skill = beginner at best, does not fill a gap
+  • A skill that is not mentioned at all = "not found", do not infer or assume
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For each skill/technology explicitly required or strongly implied by the JD, rate the candidate's
+depth based on HOW they describe using it — not just whether the word appears.
 
 Depth levels:
-- "expert"       : led projects, architected systems, mentored others, 3+ years direct use, or measurable impact described
-- "intermediate" : used independently on real projects, 1-3 years, clear hands-on usage described
-- "beginner"     : mentioned briefly, listed without context, coursework/academic only, or < 1 year
-- "not found"    : not mentioned or no evidence at all
-
-Be strict. "Familiar with X" or listing X in a skills section with no project evidence = beginner at best.
-If a skill is not mentioned at all, mark it "not found" - do not assume.
+- "expert"       : led projects, architected systems, 3+ years direct use, measurable outcomes described
+- "intermediate" : used independently on real projects, 1-3 years, clear hands-on context
+- "beginner"     : briefly mentioned, listed without context, coursework only, or < 1 year evidence
+- "not found"    : not mentioned, or no concrete evidence of use
 
 Return ONLY a JSON object with exactly these three fields:
 {{
   "match_score": <integer 0-100>,
-  "match_reason": "<2-3 sentence summary: overall fit, strongest signals, and any key gaps>",
+  "match_reason": "<2-3 sentences: which JD skills they have evidence for, which are missing, and why the score landed where it did>",
   "skill_depth": {{
     "<skill_name>": "<expert|intermediate|beginner|not found>",
     "...more skills...": "..."
   }}
 }}
 
-Include only the top 8-12 most important skills from the JD in skill_depth.
+Include the top 8-12 most important skills from the JD in skill_depth.
 No markdown, no explanation, just the JSON."""
 
 
@@ -658,8 +675,7 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
             )
             # Pass the candidate's current_title as the "applied role" so the model
             # can detect role mismatches (e.g. a fullstack dev ranked against an EIR JD)
-            applied_role = data.get("current_title") or data.get("most_recent_role")
-            score_prompt = f"RESUME DATA:\n{full_resume_context}\n\n{get_scoring_prompt(job_description, applied_role=applied_role)}"
+            score_prompt = f"RESUME DATA:\n{full_resume_context}\n\n{get_scoring_prompt(job_description)}"
             score_raw, _ = call_ai(score_prompt, is_scoring=True)
             score_raw = re.sub(r"^```[a-z]*\n?", "", score_raw)
             score_raw = re.sub(r"\n?```$", "", score_raw)
