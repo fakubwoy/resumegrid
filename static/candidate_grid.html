@@ -1784,71 +1784,78 @@ async function aiRankInBatches(candidates, jd, totalCount) {
     }).join('\n\n---CANDIDATE---\n\n');
 
     // Extract the specific skills/tech required by this JD for the prompt header
-    const prompt = `You are a senior technical recruiter evaluating candidates against a specific Job Description. Be DECISIVE and CONSISTENT — if you ranked the same candidate twice, the score must not vary by more than 3 points.
+    const prompt = `You are a strict technical recruiter doing resume-to-JD matching. Your job is mechanical: count how many JD-required skills each candidate actually demonstrates, convert that into a score. Be DECISIVE — re-running this same batch should produce scores within ±3.
 
 JOB DESCRIPTION:
 ${jd}
 
 ════════════════════════════════════════
-CRITICAL SCORING PHILOSOPHY:
-════════════════════════════════════════
-Score candidates on how well they match THIS JD's specific skills and requirements — NOT on their job title or applied role category.
-
-A candidate who applied as "Full Stack Developer" but has strong experience in every technology listed in this JD should score HIGH. A candidate with a matching job title but weak skills in the JD's requirements should score LOW.
-
-The JD skills are the PRIMARY signal. Job title / applied role is irrelevant to scoring.
-
-If the JD mentions a niche technology (e.g. VR/AR, blockchain, embedded systems, etc.) and a candidate has direct experience in it — that is a STRONG match regardless of what role they applied for.
-
-════════════════════════════════════════
-SCORING ANCHORS (use these as fixed reference points):
-════════════════════════════════════════
-90–100 → Near-perfect fit. Has direct, proven experience with the specific technologies and responsibilities in THIS JD. Strong portfolio/resume showing real results in these areas.
-75–89  → Strong candidate. Covers most of the JD's key skills with real project evidence. May have 1–2 gaps but compensates with demonstrated depth elsewhere.
-60–74  → Decent candidate. Has relevant foundational skills but coverage is shallow, academic-only, or missing 2–3 key requirements.
-40–59  → Weak fit. Some transferable skills present but most of the JD's specific requirements are absent or undemonstrated.
-20–39  → Poor fit. Background overlaps minimally with JD requirements.
-0–19   → No fit. Resume/form shows essentially no coverage of JD skills.
-
-COMMIT to a score band first, then pick the specific number. Do NOT cluster everyone at 65–75 — spread scores based on actual skill coverage.
-
-════════════════════════════════════════
-SCORING FRAMEWORK (total 100 points):
+STEP 1 — EXTRACT JD SKILLS (do this mentally first)
 ════════════════════════════════════════
 
-1. JD SKILLS MATCH (45 pts) ← THIS IS THE MOST IMPORTANT DIMENSION
-   - Extract the 6–8 most important technical skills/tools/technologies from the JD.
-   - For each skill, rate depth: expert / intermediate / beginner / not found.
-   - Score: expert on a key skill = full credit | intermediate = ~60% | beginner = ~25% | not found = 0
-   - Total score MUST be consistent with skill_depth ratings. "Not found" on most key skills = cannot exceed 50.
-   - BONUS: If the JD specifies a niche technology and candidate has hands-on project evidence of it, give full expert credit even if their job title doesn't match.
-
-2. PROJECT & PORTFOLIO QUALITY (25 pts)
-   - Real work shown that uses JD-relevant skills (client projects, portfolio, measurable outcomes) > academic projects > courses only.
-   - Specific and concrete > vague and generic. Does the work demonstrated match what the JD actually needs?
-
-3. MOTIVATION & COMMUNICATION QUALITY (15 pts)
-   - "Why this company/role" response: specific and genuine = 10–15 pts. Generic or ChatGPT-sounding = 2–5 pts.
-   - Written communication quality is itself a signal.
-
-4. AVAILABILITY & LOGISTICS (15 pts)
-   - Hyderabad in-person availability preferred (+7 if yes).
-   - Availability duration and start date match what the role needs.
+List every distinct technical skill, tool, protocol, platform, or domain the JD requires or strongly implies. These are the ONLY things that can raise the score.
 
 ════════════════════════════════════════
-CONSISTENCY RULES:
+STEP 2 — CHECK EACH SKILL AGAINST THE CANDIDATE
 ════════════════════════════════════════
-- Score ONLY on JD skill match and merit — no college prestige bias, no gender bias, no job title bias.
-- A strong project portfolio with JD-relevant work and no resume can still score 65+.
-- A resume with only course listings and no demonstrated projects scores below 50.
-- If resume text is unavailable, evaluate on form data only — note this in the reason.
-- SPREAD your scores. If the batch has varied quality, scores should vary too (e.g. range from 30 to 85, not all 60–70).
-- Re-running this same batch should produce scores within ±3 of each other. Be decisive.
+
+For each JD skill, mark it:
+  DEMONSTRATED  — used in a real project or job with concrete description
+  MENTIONED     — listed as a skill but zero project/job context (half credit)
+  NOT FOUND     — absent entirely
+
+════════════════════════════════════════
+STEP 3 — COMPUTE THE SCORE (follow this formula exactly)
+════════════════════════════════════════
+
+  jd_score = (DEMONSTRATED × 1.0 + MENTIONED × 0.5) / total_JD_skills × 80
+
+  Then add bonus points (these CANNOT push the total above 100):
+  +10 pts  — Hyderabad availability confirmed AND the role requires in-person
+  +10 pts  — "Why this role" answer is specific, genuine, and clearly role-aware (not generic)
+
+  final_score = jd_score + bonuses
+
+  Hard caps:
+  • If fewer than 2 JD skills are DEMONSTRATED → final_score ≤ 25
+  • If fewer than 1 JD skill is DEMONSTRATED → final_score ≤ 10
+
+════════════════════════════════════════
+ABSOLUTE ZERO-CREDIT LIST — these NEVER raise the score
+════════════════════════════════════════
+
+  ✗ General software engineering ability or being a "good developer"
+  ✗ Fullstack / backend / frontend / web skills (React, Node, Django, etc.) when the JD is about mobile, IoT, hardware, data science, or any other non-web domain
+  ✗ "Transferable" skills — proximity to a domain is NOT presence in it
+  ✗ Years of experience in an unrelated stack
+  ✗ Education, GPA, or college prestige (unless the JD explicitly requires a specific degree)
+  ✗ Job title, applied role, or seniority
+  ✗ "Aptitude", "potential", or "fast learner" reasoning — score only evidence, never potential
+
+  EXAMPLE: JD asks for BLE/mobile/IoT → a candidate with only React + Node.js scores 0–15. Full-stack skills are worth ZERO for a hardware/IoT/mobile JD.
+
+════════════════════════════════════════
+STRICTNESS RULES
+════════════════════════════════════════
+- A skill listed without project/job evidence = MENTIONED (not DEMONSTRATED)
+- "Familiar with X" / "exposure to X" / "learning X" = NOT FOUND
+- Coursework only = NOT FOUND
+- Do NOT infer. If it is not written, it is not there.
+- SPREAD your scores. Varied candidate quality = varied scores (e.g. 10 to 85), not everyone at 55–70.
+
+════════════════════════════════════════
+SCORE REFERENCE
+════════════════════════════════════════
+75–100 → Most JD skills DEMONSTRATED with real project evidence, very few gaps
+55–74  → Several JD skills present with evidence, some meaningful gaps
+35–54  → Only a handful of JD skills found; most are missing
+15–34  → Almost no JD-specific skills; maybe 1–2 weak matches
+0–14   → No JD skills demonstrated at all
 
 Return ONLY a JSON array, no other text:
-[{"id":0,"score":72,"reason":"2 sentence reason covering top JD skill matches and key gaps","skill_depth":{"React":"expert","Three.js":"intermediate","WebXR":"not found"}}]
+[{"id":0,"score":72,"reason":"2 sentence reason: name which JD skills were DEMONSTRATED, which were NOT FOUND, and why the score landed here","skill_depth":{"React":"expert","BLE":"not found","React Native":"not found"}}]
 
-For skill_depth: include the 6–8 most important skills extracted FROM THIS SPECIFIC JD. Rate each as exactly one of: "expert", "intermediate", "beginner", or "not found". Base rating on demonstrated use in projects/work — not just listing the word on a resume.
+For skill_depth: include ALL important skills extracted from THIS SPECIFIC JD (6–8 skills). Rate each as exactly: "expert", "intermediate", "beginner", or "not found". Base on demonstrated use in projects/work — not just listing the word.
 
 CANDIDATES:
 ---CANDIDATE---

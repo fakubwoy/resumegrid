@@ -534,50 +534,76 @@ CRITICAL: Return ONLY a valid JSON object. No markdown, no backticks, no explana
 
 
 def get_scoring_prompt(job_description, applied_role=None):
-    return f"""You are a strict technical recruiter. Your ONLY job is to measure how well this candidate's
-demonstrated skills and experience match the specific requirements in the JD below.
+    return f"""You are a strict technical recruiter doing resume-to-JD matching. Your job is purely mechanical: count how many JD-required skills this candidate actually demonstrates, then convert that fraction into a score.
 
 JOB DESCRIPTION:
 {job_description[:4000]}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SCORING RULES — READ CAREFULLY
+STEP 1 — EXTRACT JD SKILLS (do this mentally first)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The score is determined PURELY by how many JD-required skills and experiences the candidate
-actually demonstrates. NOTHING else contributes to the score.
+List every distinct technical skill, tool, protocol, platform, or domain the JD requires or strongly implies. These are the ONLY things that can raise the score.
 
-WHAT COUNTS (the only things that raise the score):
-  • Each JD-required skill the candidate has clearly used in real projects → raises score
-  • Directly relevant domain experience (e.g. mobile dev for a mobile JD) → raises score
-  • The more evidence of hands-on use (projects, descriptions, outcomes), the higher it goes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — CHECK EACH SKILL AGAINST THE RESUME
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-WHAT DOES NOT COUNT (these must NOT raise the score at all):
-  • Being a "good developer" in general
-  • Having strong fullstack / backend / web skills when the JD asks for mobile/IoT/other
-  • Years of experience in an unrelated domain
-  • Education, unless the JD explicitly requires a specific degree
-  • Seniority, communication skills, or soft skills (unless the JD explicitly asks)
-  • The candidate's job title or applied role — titles are IRRELEVANT to the score
+For each JD skill, mark it as one of:
+  DEMONSTRATED  — candidate used it in a real project or job with concrete description
+  MENTIONED     — listed as a skill but zero project/job context (half credit)
+  NOT FOUND     — absent from resume entirely
 
-SCORE BANDS:
-  90-100 : Has hands-on experience with nearly every JD skill, demonstrated in real projects
-  70-89  : Has most JD-required skills with clear project evidence
-  50-69  : Has some relevant skills but meaningful gaps in JD requirements
-  30-49  : A few JD skills present but most are missing or undemonstrated
-  10-29  : Almost none of the JD-specific skills are present
-  0-9    : None of the JD skills are present at all
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — COMPUTE THE SCORE (follow this formula exactly)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-STRICTNESS RULES:
-  • Listing a skill without any project/usage evidence = treat as NOT demonstrated
-  • "Familiar with X" or "exposure to X" = NOT demonstrated
-  • Academic coursework on a skill = beginner at best, does not fill a gap
-  • A skill that is not mentioned at all = "not found", do not infer or assume
+  raw_score = (DEMONSTRATED × 1.0 + MENTIONED × 0.5) / total_JD_skills × 100
+
+  Apply hard caps:
+  • If fewer than 2 JD skills are DEMONSTRATED → score ≤ 25, regardless of formula
+  • If fewer than 1 JD skill is DEMONSTRATED → score ≤ 10
+
+  Round to nearest integer. That is your match_score.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ABSOLUTE ZERO-CREDIT LIST — these NEVER raise the score
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✗ General software engineering ability
+  ✗ Fullstack / backend / frontend / web skills (React, Node, Django, etc.) when the JD is about mobile, IoT, hardware, data science, or any other non-web domain
+  ✗ "Transferable" skills — proximity to a domain is NOT presence in it
+  ✗ Years of experience in an unrelated stack
+  ✗ Education or GPA (unless the JD explicitly requires a specific degree)
+  ✗ Soft skills, communication, teamwork
+  ✗ Job title, seniority, or reputation
+  ✗ "Aptitude" or "potential" or "fast learner" reasoning — score only evidence, never potential
+
+  EXAMPLE: A JD asking for BLE/mobile/IoT — a candidate with only React + Node.js + full-stack projects scores in the 0-15 range. Full-stack skills are worth ZERO for a hardware/IoT/mobile JD.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STRICTNESS RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • A skill listed without project/job evidence = MENTIONED (not DEMONSTRATED)
+  • "Familiar with X" / "exposure to X" / "learning X" = NOT FOUND
+  • Coursework only = NOT FOUND
+  • Do NOT infer. If it is not written, it is not there.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SCORE REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  85-100 : Majority of JD skills DEMONSTRATED in real projects, very few gaps
+  65-84  : Most JD skills present with clear evidence, some gaps
+  45-64  : Several JD skills present but significant gaps remain
+  25-44  : Only a handful of JD skills found, most are missing
+  10-24  : Almost no JD-specific skills present; maybe 1-2 at most
+  0-9    : No JD skills demonstrated at all
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-For each skill/technology explicitly required or strongly implied by the JD, rate the candidate's
-depth based on HOW they describe using it — not just whether the word appears.
+For each skill/technology explicitly required or strongly implied by the JD, rate the candidate:
 
 Depth levels:
 - "expert"       : led projects, architected systems, 3+ years direct use, measurable outcomes described
@@ -588,14 +614,14 @@ Depth levels:
 Return ONLY a JSON object with exactly these three fields:
 {{
   "match_score": <integer 0-100>,
-  "match_reason": "<2-3 sentences: which JD skills they have evidence for, which are missing, and why the score landed where it did>",
+  "match_reason": "<2-3 sentences: exactly which JD skills were DEMONSTRATED, which were only MENTIONED, which were NOT FOUND, and why the score landed where it did. Be specific — name the skills.>",
   "skill_depth": {{
     "<skill_name>": "<expert|intermediate|beginner|not found>",
     "...more skills...": "..."
   }}
 }}
 
-Include the top 8-12 most important skills from the JD in skill_depth.
+Include ALL JD-required skills in skill_depth (up to 12).
 No markdown, no explanation, just the JSON."""
 
 
