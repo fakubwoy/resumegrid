@@ -47,7 +47,7 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 # ── Provider configuration — Gemini only ──────────────────────────────────────
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 PRIMARY_PROVIDER       = "gemini"
 MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "5"))   # was 20 — reduces thread pool RSS
