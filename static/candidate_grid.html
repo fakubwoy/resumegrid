@@ -1734,57 +1734,38 @@ async function fetchResumesInBatches(candidates, totalCount) {
 
 // AI ranking in batches
 async function aiRankInBatches(candidates, jd, totalCount) {
-  const BATCH = 8; // rank 8 at a time — keeps prompt within token limits, especially with long resumes
+  // BATCH=4 keeps each response well under Gemini's output limit (~4800 chars)
+  // which was the root cause of truncation with BATCH=8.
+  // PARALLEL=3 runs 3 batches concurrently, so total wall-clock time is similar
+  // to the old serial BATCH=8 approach but with far fewer truncation errors.
+  const BATCH    = 4;
+  const PARALLEL = 3;
   let done = 0;
+  const donelock = { v: 0 }; // simple counter for progress (shared across parallel tasks)
 
-  for (let i = 0; i < candidates.length; i += BATCH) {
-    const batch = candidates.slice(i, i+BATCH);
+  // ── Helpers (defined once, outside the loop) ─────────────────────────────
 
-    // Build candidate summaries for the batch
-    const summaries = batch.map((c, idx) => {
-      const lines = [
-        `ID: ${idx}`,
-        `Name: ${c.full_name || 'Unknown'}`,
-        `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
-        `College: ${c.college || '?'} | Degree: ${c.degree || '?'} | Current Year: ${c.year || '?'}`,
-        `Available Duration: ${c.duration || '?'} | Can Start: ${c.start_date || '?'}`,
-        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes ✓' : 'No'}`,
-        `Other Commitments: ${c.commitments || 'None mentioned'}`,
-        `Location: ${c.location || '?'}`,
-      ];
+  function buildSummary(c, idx) {
+    const lines = [
+      `ID: ${idx}`,
+      `Name: ${c.full_name || 'Unknown'}`,
+      `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
+      `College: ${c.college || '?'} | Degree: ${c.degree || '?'} | Current Year: ${c.year || '?'}`,
+      `Available Duration: ${c.duration || '?'} | Can Start: ${c.start_date || '?'}`,
+      `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes ✓' : 'No'}`,
+      `Other Commitments: ${c.commitments || 'None mentioned'}`,
+      `Location: ${c.location || '?'}`,
+    ];
+    if (c.why_alfaleus)        lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
+    if (c.project_description) lines.push(`End-to-End Project:\n${c.project_description.slice(0, 500)}`);
+    if (c.achievements)        lines.push(`Achievements: ${c.achievements.slice(0, 400)}`);
+    if (c.notes)               lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
+    if (c.resume_text)         lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
+    else                       lines.push(`(No resume text — evaluating on form data only)`);
+    return lines.join('\n');
+  }
 
-      // Why Alfaleus — full text, not truncated
-      if (c.why_alfaleus) {
-        lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
-      }
-
-      // Project description — separate field if available, else from why_alfaleus won't duplicate
-      if (c.project_description) {
-        lines.push(`End-to-End Project Described:\n${c.project_description.slice(0, 500)}`);
-      }
-
-      // Achievements
-      if (c.achievements) {
-        lines.push(`Achievements & Awards: ${c.achievements.slice(0, 400)}`);
-      }
-
-      // Additional notes
-      if (c.notes) {
-        lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
-      }
-
-      // Resume — significantly more text for fair evaluation
-      if (c.resume_text) {
-        lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
-      } else {
-        lines.push(`(No resume text available — evaluating on form data only)`);
-      }
-
-      return lines.join('\n');
-    }).join('\n\n---CANDIDATE---\n\n');
-
-    // Extract the specific skills/tech required by this JD for the prompt header
-    const prompt = `You are a strict technical recruiter doing resume-to-JD matching. Your job is mechanical: count how many JD-required skills each candidate actually demonstrates, convert that into a score. Be DECISIVE — re-running this same batch should produce scores within ±3.
+  const PROMPT_PREAMBLE = `You are a strict technical recruiter doing resume-to-JD matching. Your job is mechanical: count how many JD-required skills each candidate actually demonstrates, convert that into a score. Be DECISIVE — re-running this same batch should produce scores within ±3.
 
 JOB DESCRIPTION:
 ${jd}
@@ -1825,14 +1806,12 @@ ABSOLUTE ZERO-CREDIT LIST — these NEVER raise the score
 ════════════════════════════════════════
 
   ✗ General software engineering ability or being a "good developer"
-  ✗ Fullstack / backend / frontend / web skills (React, Node, Django, etc.) when the JD is about mobile, IoT, hardware, data science, or any other non-web domain
+  ✗ Fullstack / backend / frontend / web skills when the JD is about mobile, IoT, hardware, data science, or any other non-web domain
   ✗ "Transferable" skills — proximity to a domain is NOT presence in it
   ✗ Years of experience in an unrelated stack
   ✗ Education, GPA, or college prestige (unless the JD explicitly requires a specific degree)
   ✗ Job title, applied role, or seniority
   ✗ "Aptitude", "potential", or "fast learner" reasoning — score only evidence, never potential
-
-  EXAMPLE: JD asks for BLE/mobile/IoT → a candidate with only React + Node.js scores 0–15. Full-stack skills are worth ZERO for a hardware/IoT/mobile JD.
 
 ════════════════════════════════════════
 STRICTNESS RULES
@@ -1858,105 +1837,99 @@ Return ONLY a JSON array, no other text:
 For skill_depth: include ALL important skills extracted from THIS SPECIFIC JD (6–8 skills). Rate each as exactly: "expert", "intermediate", "beginner", or "not found". Base on demonstrated use in projects/work — not just listing the word.
 
 CANDIDATES:
----CANDIDATE---
-${summaries}`;
+---CANDIDATE---`;
 
-    // ── Apply scores from a response, return list of still-unscored batch indices
-    function applyScores(scores, targetBatch) {
-      scores.forEach(s => {
-        if (s.id >= 0 && s.id < targetBatch.length) {
-          targetBatch[s.id].score       = Math.max(0, Math.min(100, Math.round(s.score)));
-          targetBatch[s.id].score_reason = s.reason || '';
-          targetBatch[s.id].skill_depth  = s.skill_depth || null;
-        }
+  function buildBatchPrompt(batchCandidates) {
+    const summaries = batchCandidates.map((c, idx) => buildSummary(c, idx)).join('\n\n---CANDIDATE---\n\n');
+    return PROMPT_PREAMBLE + '\n' + summaries;
+  }
+
+  function buildSinglePrompt(c) {
+    return PROMPT_PREAMBLE.replace(
+      /Return ONLY a JSON array.*$/s,
+      `Return a JSON array with exactly ONE element (id always 0).\n\nCANDIDATES:\n---CANDIDATE---\n${buildSummary(c, 0)}`
+    );
+  }
+
+  async function callRankApi(promptText, timeoutMs = 90000) {
+    try {
+      const res = await fetch(`${API_BASE}/api/rank-candidates`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ prompt: promptText }),
+        signal: AbortSignal.timeout(timeoutMs)
       });
-      return targetBatch.map((c, idx) => idx).filter(idx => targetBatch[idx].score === 0 && targetBatch[idx].score_reason === 'Pending...');
-    }
-
-    // ── Single API call, returns {ok, scores, retryIndividually}
-    async function callRankApi(promptText, timeoutMs = 120000) {
-      try {
-        const res = await fetch(`${API_BASE}/api/rank-candidates`, {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ prompt: promptText }),
-          signal: AbortSignal.timeout(timeoutMs)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok || data.partial) {
-          // ok OR partial salvage — apply whatever scores came back
-          return { ok: true, scores: data.scores || [] };
-        }
-        return { ok: false, scores: data.scores || [], retryIndividually: data.retry_individually };
-      } catch(e) {
-        return { ok: false, scores: [], networkError: true };
+      const data = await res.json().catch(() => ({}));
+      if (res.ok || data.partial) {
+        return { ok: true, scores: data.scores || [] };
       }
+      return { ok: false, scores: data.scores || [], retryIndividually: data.retry_individually };
+    } catch(e) {
+      return { ok: false, scores: [], networkError: true };
     }
+  }
 
-    // ── Build a prompt for a single candidate
-    function buildSinglePrompt(c, jd) {
-      const lines = [
-        `ID: 0`,
-        `Name: ${c.full_name || 'Unknown'}`,
-        `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
-        `College: ${c.college || '?'} | Degree: ${c.degree || '?'} | Current Year: ${c.year || '?'}`,
-        `Available Duration: ${c.duration || '?'} | Can Start: ${c.start_date || '?'}`,
-        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes ✓' : 'No'}`,
-        `Other Commitments: ${c.commitments || 'None mentioned'}`,
-        `Location: ${c.location || '?'}`,
-      ];
-      if (c.why_alfaleus)       lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
-      if (c.project_description) lines.push(`End-to-End Project:\n${c.project_description.slice(0, 500)}`);
-      if (c.achievements)       lines.push(`Achievements: ${c.achievements.slice(0, 400)}`);
-      if (c.notes)              lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
-      if (c.resume_text)        lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
-      else                      lines.push(`(No resume text available — evaluating on form data only)`);
-      // Reuse the same system prompt preamble (up to the CANDIDATES: section)
-      const preamble = prompt.includes('CANDIDATES:')
-        ? prompt.slice(0, prompt.indexOf('CANDIDATES:'))
-        : prompt.slice(0, prompt.indexOf('---CANDIDATE---'));
-      return preamble +
-        `\nReturn a JSON array with exactly ONE element (id always 0).\n\nCANDIDATES:\n---CANDIDATE---\n${lines.join('\n')}`;
-    }
+  function applyScores(scores, targetBatch) {
+    scores.forEach(s => {
+      if (s.id >= 0 && s.id < targetBatch.length) {
+        targetBatch[s.id].score        = Math.max(0, Math.min(100, Math.round(s.score)));
+        targetBatch[s.id].score_reason = s.reason || '';
+        targetBatch[s.id].skill_depth  = s.skill_depth || null;
+      }
+    });
+    // Return indices of candidates still pending
+    return targetBatch.map((c, idx) => idx).filter(idx =>
+      targetBatch[idx].score === 0 && targetBatch[idx].score_reason === 'Pending...'
+    );
+  }
 
-    // ── Attempt 1: batch call
-    let result = await callRankApi(prompt);
+  // ── Process one batch: batch call → parallel individual retries if needed ──
+
+  async function processBatch(batch) {
+    // Attempt 1: score the whole batch in one call
+    let result = await callRankApi(buildBatchPrompt(batch));
     let unscored = applyScores(result.scores, batch);
 
-    // ── Attempt 2: if batch returned error or left gaps, retry unscored as individuals
-    if (!result.ok && unscored.length > 0) {
-      await new Promise(r => setTimeout(r, 3000));
-      result = await callRankApi(prompt);
+    // Attempt 2: if the whole batch errored (not just truncated), retry batch once
+    if (!result.ok && result.scores.length === 0 && !result.networkError) {
+      result = await callRankApi(buildBatchPrompt(batch));
       unscored = applyScores(result.scores, batch);
     }
 
-    // ── Attempt 3: individual fallback — score each unscored candidate one-by-one
+    // Attempt 3: score remaining unscored candidates individually, all in parallel
     if (unscored.length > 0) {
-      for (const idx of unscored) {
+      await Promise.all(unscored.map(async idx => {
         const c = batch[idx];
-        const singlePrompt = buildSinglePrompt(c, jd);
-        let singleResult = await callRankApi(singlePrompt, 60000);
-        if (!singleResult.ok && singleResult.scores.length === 0) {
-          // One more try with a short wait
-          await new Promise(r => setTimeout(r, 2000));
-          singleResult = await callRankApi(singlePrompt, 60000);
+        let r = await callRankApi(buildSinglePrompt(c), 60000);
+        if (!r.ok && r.scores.length === 0 && !r.networkError) {
+          // One retry for transient errors
+          r = await callRankApi(buildSinglePrompt(c), 60000);
         }
-        if (singleResult.scores.length > 0) {
-          const s = singleResult.scores[0];
-          c.score       = Math.max(0, Math.min(100, Math.round(s.score)));
+        if (r.scores.length > 0) {
+          const s = r.scores[0];
+          c.score        = Math.max(0, Math.min(100, Math.round(s.score)));
           c.score_reason = s.reason || '';
           c.skill_depth  = s.skill_depth || null;
-        } else if (singleResult.networkError) {
-          // Genuine network failure — mark honestly, don't pretend AI scored it
-          c.score       = null;
+        } else if (r.networkError) {
+          c.score        = null;
           c.score_reason = 'Network error — could not reach AI. Re-run ranking to retry.';
         }
-        // If AI returned a 500 with no salvageable data, leave score=0/Pending
-        // so the UI shows it as unscored rather than falsely scoring it
-      }
+        // Any other failure: leave as Pending so it's visibly unscored, not fake-scored
+      }));
     }
+  }
 
-    done += batch.length;
+  // ── Slice candidates into BATCH-sized chunks and run PARALLEL at a time ───
+
+  const batches = [];
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    batches.push(candidates.slice(i, i + BATCH));
+  }
+
+  for (let i = 0; i < batches.length; i += PARALLEL) {
+    const wave = batches.slice(i, i + PARALLEL);
+    await Promise.all(wave.map(b => processBatch(b)));
+    done += wave.reduce((s, b) => s + b.length, 0);
     const pct = 50 + Math.round((done / candidates.length) * 48);
     setProgress(pct, `Ranked ${done}/${candidates.length} candidates...`);
   }
