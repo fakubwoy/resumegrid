@@ -1861,42 +1861,98 @@ CANDIDATES:
 ---CANDIDATE---
 ${summaries}`;
 
-    let ranked = false;
-    for (let attempt = 0; attempt < 2 && !ranked; attempt++) {
+    // ── Apply scores from a response, return list of still-unscored batch indices
+    function applyScores(scores, targetBatch) {
+      scores.forEach(s => {
+        if (s.id >= 0 && s.id < targetBatch.length) {
+          targetBatch[s.id].score       = Math.max(0, Math.min(100, Math.round(s.score)));
+          targetBatch[s.id].score_reason = s.reason || '';
+          targetBatch[s.id].skill_depth  = s.skill_depth || null;
+        }
+      });
+      return targetBatch.map((c, idx) => idx).filter(idx => targetBatch[idx].score === 0 && targetBatch[idx].score_reason === 'Pending...');
+    }
+
+    // ── Single API call, returns {ok, scores, retryIndividually}
+    async function callRankApi(promptText, timeoutMs = 120000) {
       try {
         const res = await fetch(`${API_BASE}/api/rank-candidates`, {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ prompt }),
-          signal: AbortSignal.timeout(120000)  // 2 min — large resume batches need time
+          body: JSON.stringify({ prompt: promptText }),
+          signal: AbortSignal.timeout(timeoutMs)
         });
-
-        if (res.ok) {
-          const data = await res.json();
-          const scores = data.scores || [];
-          scores.forEach(s => {
-            if (s.id >= 0 && s.id < batch.length) {
-              batch[s.id].score = Math.max(0, Math.min(100, Math.round(s.score)));
-              batch[s.id].score_reason = s.reason || '';
-              batch[s.id].skill_depth = s.skill_depth || null;
-            }
-          });
-          ranked = true;
-        } else if (attempt === 0) {
-          // Server error — wait 3s then retry
-          await new Promise(r => setTimeout(r, 3000));
-        } else {
-          batch.forEach(c => { if (c.score === 0) { c.score = 50; c.score_reason = 'Scored on form data (AI unavailable)'; } });
-          ranked = true;
+        const data = await res.json().catch(() => ({}));
+        if (res.ok || data.partial) {
+          // ok OR partial salvage — apply whatever scores came back
+          return { ok: true, scores: data.scores || [] };
         }
+        return { ok: false, scores: data.scores || [], retryIndividually: data.retry_individually };
       } catch(e) {
-        if (attempt === 0) {
-          // First attempt failed (timeout/network) — retry once after a short wait
-          await new Promise(r => setTimeout(r, 4000));
-        } else {
-          batch.forEach(c => { c.score = 40; c.score_reason = 'Ranked on form data (network error — retry failed)'; });
-          ranked = true;
+        return { ok: false, scores: [], networkError: true };
+      }
+    }
+
+    // ── Build a prompt for a single candidate
+    function buildSinglePrompt(c, jd) {
+      const lines = [
+        `ID: 0`,
+        `Name: ${c.full_name || 'Unknown'}`,
+        `Roles Applied: ${(c.roles||[]).join(', ') || 'None'}`,
+        `College: ${c.college || '?'} | Degree: ${c.degree || '?'} | Current Year: ${c.year || '?'}`,
+        `Available Duration: ${c.duration || '?'} | Can Start: ${c.start_date || '?'}`,
+        `Hyderabad In-Person: ${c.hyderabad_bool ? 'Yes ✓' : 'No'}`,
+        `Other Commitments: ${c.commitments || 'None mentioned'}`,
+        `Location: ${c.location || '?'}`,
+      ];
+      if (c.why_alfaleus)       lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
+      if (c.project_description) lines.push(`End-to-End Project:\n${c.project_description.slice(0, 500)}`);
+      if (c.achievements)       lines.push(`Achievements: ${c.achievements.slice(0, 400)}`);
+      if (c.notes)              lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
+      if (c.resume_text)        lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
+      else                      lines.push(`(No resume text available — evaluating on form data only)`);
+      // Reuse the same system prompt preamble (up to the CANDIDATES: section)
+      const preamble = prompt.includes('CANDIDATES:')
+        ? prompt.slice(0, prompt.indexOf('CANDIDATES:'))
+        : prompt.slice(0, prompt.indexOf('---CANDIDATE---'));
+      return preamble +
+        `\nReturn a JSON array with exactly ONE element (id always 0).\n\nCANDIDATES:\n---CANDIDATE---\n${lines.join('\n')}`;
+    }
+
+    // ── Attempt 1: batch call
+    let result = await callRankApi(prompt);
+    let unscored = applyScores(result.scores, batch);
+
+    // ── Attempt 2: if batch returned error or left gaps, retry unscored as individuals
+    if (!result.ok && unscored.length > 0) {
+      await new Promise(r => setTimeout(r, 3000));
+      result = await callRankApi(prompt);
+      unscored = applyScores(result.scores, batch);
+    }
+
+    // ── Attempt 3: individual fallback — score each unscored candidate one-by-one
+    if (unscored.length > 0) {
+      for (const idx of unscored) {
+        const c = batch[idx];
+        const singlePrompt = buildSinglePrompt(c, jd);
+        let singleResult = await callRankApi(singlePrompt, 60000);
+        if (!singleResult.ok && singleResult.scores.length === 0) {
+          // One more try with a short wait
+          await new Promise(r => setTimeout(r, 2000));
+          singleResult = await callRankApi(singlePrompt, 60000);
         }
+        if (singleResult.scores.length > 0) {
+          const s = singleResult.scores[0];
+          c.score       = Math.max(0, Math.min(100, Math.round(s.score)));
+          c.score_reason = s.reason || '';
+          c.skill_depth  = s.skill_depth || null;
+        } else if (singleResult.networkError) {
+          // Genuine network failure — mark honestly, don't pretend AI scored it
+          c.score       = null;
+          c.score_reason = 'Network error — could not reach AI. Re-run ranking to retry.';
+        }
+        // If AI returned a 500 with no salvageable data, leave score=0/Pending
+        // so the UI shows it as unscored rather than falsely scoring it
       }
     }
 

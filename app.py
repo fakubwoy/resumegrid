@@ -1299,10 +1299,76 @@ def api_rank_candidates():
 
     except json.JSONDecodeError as e:
         logger.error("JSON parse error in rank response: %s | raw: %.300s", e, raw)
-        return jsonify({"scores": [], "error": f"JSON parse error: {e}"}), 500
+        # ── Salvage partial scores from truncated JSON ────────────────────────
+        # Gemini truncates mid-array when the response is large. Extract every
+        # complete {"id":..., "score":...} object that parsed cleanly so the
+        # frontend never falls back to score=50 for already-completed candidates.
+        salvaged = []
+        try:
+            # Pass 1: simple flat objects (most common case)
+            for m in re.finditer(
+                r'\{\s*"id"\s*:\s*(\d+).*?"score"\s*:\s*(\d+)[^}]*\}',
+                raw, re.DOTALL
+            ):
+                try:
+                    obj = json.loads(m.group())
+                    if "id" in obj and "score" in obj:
+                        skill_depth = obj.get("skill_depth")
+                        salvaged.append({
+                            "id":          int(obj["id"]),
+                            "score":       max(0, min(100, int(float(obj["score"])))),
+                            "reason":      str(obj.get("reason", ""))[:300],
+                            "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
+                        })
+                except Exception:
+                    pass
+
+            # Pass 2: objects with nested skill_depth dict — handle brace nesting
+            if not salvaged:
+                depth = 0
+                start = None
+                for pos, ch in enumerate(raw):
+                    if ch == '{':
+                        if depth == 0:
+                            start = pos
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0 and start is not None:
+                            chunk = raw[start:pos+1]
+                            try:
+                                obj = json.loads(chunk)
+                                if "id" in obj and "score" in obj:
+                                    skill_depth = obj.get("skill_depth")
+                                    salvaged.append({
+                                        "id":          int(obj["id"]),
+                                        "score":       max(0, min(100, int(float(obj["score"])))),
+                                        "reason":      str(obj.get("reason", ""))[:300],
+                                        "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
+                                    })
+                            except Exception:
+                                pass
+                            start = None
+        except Exception as salvage_err:
+            logger.warning("Salvage attempt failed: %s", salvage_err)
+
+        if salvaged:
+            # Deduplicate by id (keep first occurrence)
+            seen_ids = set()
+            unique = []
+            for s in salvaged:
+                if s["id"] not in seen_ids:
+                    seen_ids.add(s["id"])
+                    unique.append(s)
+            logger.info("Salvaged %d partial score(s) from truncated response", len(unique))
+            return jsonify({"scores": unique, "provider": "gemini", "partial": True})
+
+        # Nothing salvageable — signal frontend to retry candidates individually
+        return jsonify({"scores": [], "error": f"JSON parse error: {e}", "retry_individually": True}), 500
+
     except Exception as e:
         logger.error("Ranking error: %s", e, exc_info=True)
-        return jsonify({"scores": [], "error": str(e)}), 500
+        return jsonify({"scores": [], "error": str(e), "retry_individually": True}), 500
 
 
 @app.route("/api/match-roles", methods=["POST"])
