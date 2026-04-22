@@ -75,20 +75,31 @@ AI_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_AI)
 
 # ── Gemini / call_ai ─────────────────────────────────────────────────────────
 
-def call_ai(text, is_scoring=False):
+def call_ai(text, is_scoring=False, is_batch=False):
     """
     Call Gemini. Retries up to 4 times on 429 with exponential back-off.
     Returns (raw_response_str, "gemini").
+
+    Token budgets:
+    - extraction (default):  4096 — needs room for all resume fields
+    - single scoring:         700 — small JSON: score + reason + skill_depth
+    - batch ranking:         4096 — one JSON object per candidate in the batch (8 candidates × ~400 tokens)
     """
     system = (
         "You are an expert resume parser. "
         "Return ONLY valid JSON. No markdown, no backticks, no explanation."
     ) if not is_scoring else (
-        "You are a technical recruiter. Return ONLY valid JSON. No markdown, no explanation."
+        "You are a technical recruiter. Return ONLY valid JSON. No markdown, no explanation. "
+        "NEVER include 'demonstrated', 'mentioned', or 'not_found' arrays in your output — "
+        "those are internal reasoning steps only. Output ONLY: id, score, reason, skill_depth."
     )
 
-    # Scoring only needs a small JSON output; extraction needs more room.
-    max_out_tokens = 600 if is_scoring else 4096
+    if is_batch:
+        max_out_tokens = 4096  # 8 candidates × ~400 tokens each for score+reason+skill_depth
+    elif is_scoring:
+        max_out_tokens = 700
+    else:
+        max_out_tokens = 4096
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -1278,7 +1289,7 @@ def api_rank_candidates():
         return jsonify({"scores": [], "error": "no prompt"}), 400
 
     try:
-        raw, provider = call_ai(prompt, is_scoring=True)
+        raw, provider = call_ai(prompt, is_scoring=True, is_batch=True)
         logger.info("Rank response from %s: %d chars", provider, len(raw))
 
         # Strip markdown fences if present
