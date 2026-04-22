@@ -47,10 +47,14 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 # ── Provider configuration — Gemini only ──────────────────────────────────────
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash-lite: ~10x cheaper than gemini-2.5-flash ($0.10/M vs $1.25/M input)
+# and has higher RPM limits — best choice for bulk resume processing
+GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 PRIMARY_PROVIDER       = "gemini"
-MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "5"))   # was 20 — reduces thread pool RSS
+# Keep concurrency low to stay under RPM limits and avoid 429 errors.
+# gemini-2.5-flash-lite free tier: ~15 RPM. Paid tier: higher but we stay conservative.
+MAX_CONCURRENT_AI      = int(os.environ.get("MAX_CONCURRENT_AI", "3"))
 MAX_CONCURRENT_EXTRACT = int(os.environ.get("MAX_CONCURRENT_EXTRACT", "3"))  # was 8 — gevent handles concurrency
 
 logger.info("ResumeGrid starting up (log level: %s)", LOG_LEVEL)
@@ -73,7 +77,7 @@ AI_SEMAPHORE = threading.Semaphore(MAX_CONCURRENT_AI)
 
 def call_ai(text, is_scoring=False):
     """
-    Call Gemini. Retries once on transient errors, raises on 429.
+    Call Gemini. Retries up to 4 times on 429 with exponential back-off.
     Returns (raw_response_str, "gemini").
     """
     system = (
@@ -83,6 +87,9 @@ def call_ai(text, is_scoring=False):
         "You are a technical recruiter. Return ONLY valid JSON. No markdown, no explanation."
     )
 
+    # Scoring only needs a small JSON output; extraction needs more room.
+    max_out_tokens = 600 if is_scoring else 4096
+
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
@@ -91,30 +98,41 @@ def call_ai(text, is_scoring=False):
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
             "temperature": 0.0,
-            "maxOutputTokens": 8192,
+            "maxOutputTokens": max_out_tokens,
             "responseMimeType": "application/json",
         },
         "system_instruction": {"parts": [{"text": system}]},
     }
 
     last_err = None
-    for attempt in range(2):
+    # Exponential back-off: wait 5s, 15s, 30s, 60s on 429 before giving up
+    backoff_delays = [5, 15, 30, 60]
+    for attempt in range(5):
         try:
             with AI_SEMAPHORE:
-                resp = httpx.post(url, json=payload, timeout=45.0)
+                # Small delay between releases to stay under RPM limits
+                time.sleep(0.4)
+                resp = httpx.post(url, json=payload, timeout=60.0)
 
             if resp.status_code == 429:
-                raise RuntimeError("Gemini 429 — quota exceeded. Try again in a moment.")
+                if attempt < len(backoff_delays):
+                    wait = backoff_delays[attempt]
+                    logger.warning("Gemini 429 — rate limited, waiting %ds (attempt %d/5)", wait, attempt + 1)
+                    time.sleep(wait)
+                    continue
+                raise RuntimeError("Gemini 429 — quota exceeded after retries. Try again later.")
 
             resp.raise_for_status()
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip(), "gemini"
 
+        except RuntimeError:
+            raise
         except Exception as e:
             last_err = e
-            if attempt == 0:
-                time.sleep(1)
+            if attempt < 4:
+                time.sleep(2)
 
-    raise RuntimeError(f"Gemini failed: {last_err}")
+    raise RuntimeError(f"Gemini failed after 5 attempts: {last_err}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -537,7 +555,7 @@ def get_scoring_prompt(job_description, applied_role=None):
     return f"""You are a strict technical recruiter doing resume-to-JD matching. Your job is purely mechanical: count how many JD-required skills this candidate actually demonstrates, then convert that fraction into a score.
 
 JOB DESCRIPTION:
-{job_description[:4000]}
+{job_description[:2000]}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 1 — EXTRACT JD SKILLS (do this mentally first)
@@ -655,7 +673,7 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
     t0 = time.monotonic()
     logger.info("AI extracting '%s'", filename)
 
-    prompt = f"Resume text:\n\n{text[:20000]}\n\n{get_extraction_prompt()}"
+    prompt = f"Resume text:\n\n{text[:8000]}\n\n{get_extraction_prompt()}"
     raw, provider_used = call_ai(prompt)
 
     raw = re.sub(r"^```[a-z]*\n?", "", raw)
@@ -681,9 +699,9 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
     # JD scoring (also via AI, fully parallel)
     if job_description:
         try:
-            # Build rich context: extracted fields + full raw resume text.
-            # This ensures the scorer sees everything — project descriptions, impact
-            # statements, work history details — not just a 10-field skeleton.
+            # Only send extracted fields to the scorer — NOT the full raw resume text.
+            # This cuts input tokens by ~70% while keeping all the information the
+            # scorer actually needs (skills, projects, titles, etc.).
             extracted_fields = []
             for field in ["full_name", "current_title", "years_of_experience", "skills",
                           "programming_languages", "frameworks", "education_degree",
@@ -694,14 +712,7 @@ def extract_single_resume(filename, text, url_overrides, job_description=None):
                 if val:
                     extracted_fields.append(f"{field}: {val}")
             extracted_summary = "\n".join(extracted_fields)
-            # Full raw resume text (capped at 15k) so no detail is lost during scoring
-            full_resume_context = (
-                f"--- EXTRACTED FIELDS ---\n{extracted_summary}\n\n"
-                f"--- FULL RESUME TEXT ---\n{text[:15000]}"
-            )
-            # Pass the candidate's current_title as the "applied role" so the model
-            # can detect role mismatches (e.g. a fullstack dev ranked against an EIR JD)
-            score_prompt = f"RESUME DATA:\n{full_resume_context}\n\n{get_scoring_prompt(job_description)}"
+            score_prompt = f"RESUME DATA:\n{extracted_summary}\n\n{get_scoring_prompt(job_description)}"
             score_raw, _ = call_ai(score_prompt, is_scoring=True)
             score_raw = re.sub(r"^```[a-z]*\n?", "", score_raw)
             score_raw = re.sub(r"\n?```$", "", score_raw)
