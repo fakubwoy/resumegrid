@@ -95,7 +95,7 @@ def call_ai(text, is_scoring=False, is_batch=False):
     )
 
     if is_batch:
-        max_out_tokens = 4096  # 8 candidates × ~400 tokens each for score+reason+skill_depth
+        max_out_tokens = 8192  # up to 20 candidates × ~400 tokens each for score+reason+skill_depth
     elif is_scoring:
         max_out_tokens = 700
     else:
@@ -1296,6 +1296,12 @@ def api_rank_candidates():
         clean = raw.strip()
         clean = re.sub(r"^```[a-z]*\n?", "", clean)
         clean = re.sub(r"\n?```$", "", clean).strip()
+
+        # Sanitize bare control characters (e.g. literal newlines inside JSON strings
+        # that Gemini sometimes emits, causing "Invalid control character" parse errors).
+        # Replace all control chars except \t with a space — safe because JSON strings
+        # must not contain raw control chars anyway; \n in reason text becomes a space.
+        clean = ''.join(c if ord(c) >= 0x20 or c == '\t' else ' ' for c in clean)
 
         # Pull out JSON array
         arr_match = re.search(r"\[.*\]", clean, re.DOTALL)

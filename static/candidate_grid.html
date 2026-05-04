@@ -1701,8 +1701,19 @@ async function startRanking() {
     // Filter to candidates who applied for this specific role.
     // This ensures all applicants for the role are ranked (fixes "missing candidates" bug)
     // and the AI gets correctly calibrated scores (no noise from unrelated candidates).
+    // Match candidates whose applied role overlaps with the preset label.
+    // We check each word from the preset label (length > 3) against the candidate's
+    // role string, so "Videographer + Editor" correctly matches roles that contain
+    // "videographer" OR "editor" — not just the first word.
+    const presetWords = preset.label.toLowerCase().split(/[\s+\/\(\)\-]+/).filter(w => w.length > 3);
     const roleApplicants = allCandidates.filter(c =>
-      c.roles && c.roles.some(r => r.toLowerCase().includes(preset.label.split(' ')[0].toLowerCase()))
+      c.roles && c.roles.some(r => {
+        const rLower = r.toLowerCase();
+        // Exact full match first (most reliable)
+        if (rLower === preset.label.toLowerCase()) return true;
+        // Partial: any significant word from preset label found in role
+        return presetWords.some(w => rLower.includes(w));
+      })
     );
 
     if (roleApplicants.length > 0) {
