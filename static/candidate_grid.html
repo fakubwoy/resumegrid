@@ -1795,45 +1795,39 @@ async function rankCandidates(candidates, jd) {
 }
 
 // Fetch resumes via backend proxy (to handle CORS on Drive)
-// All candidates are fetched fully in parallel — the server caches results so
-// repeated ranking runs skip the Drive crawl entirely (cache HIT in logs).
 async function fetchResumesInBatches(candidates, totalCount) {
+  const BATCH = 8;
   let done = 0;
-  // Skip candidates whose resume_text is already populated (cached from a previous run)
-  const toFetch = candidates.filter(c => !c.resume_text);
-  const alreadyCached = candidates.length - toFetch.length;
-  if (alreadyCached > 0) {
-    setProgress(15, `${alreadyCached} resumes already cached, fetching ${toFetch.length} new...`);
-  }
-
-  await Promise.all(toFetch.map(async c => {
-    try {
-      const res = await fetch(`${API_BASE}/api/fetch-resume`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ url: c.resume }),
-        signal: AbortSignal.timeout(30000)  // 30s per resume — Drive folder crawls can be slow
-      });
-      if (res.ok) {
-        const data = await res.json();
-        c.resume_text = data.text || null;
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    const batch = candidates.slice(i, i+BATCH);
+    await Promise.all(batch.map(async c => {
+      try {
+        const res = await fetch(`${API_BASE}/api/fetch-resume`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ url: c.resume }),
+          signal: AbortSignal.timeout(20000)  // bumped from 15s — larger docs need more time
+        });
+        if (res.ok) {
+          const data = await res.json();
+          c.resume_text = data.text || null;
+        }
+      } catch(e) {
+        c.resume_text = null; // Will rank on form data only
       }
-    } catch(e) {
-      c.resume_text = null; // Will rank on form data only
-    }
-    done++;
-    const pct = 10 + Math.round((done / toFetch.length) * 35);
-    setProgress(pct, `Fetched ${done + alreadyCached}/${candidates.length} resumes...`);
-  }));
+      done++;
+    }));
+    const pct = 10 + Math.round((done / candidates.length) * 35);
+    setProgress(pct, `Fetched ${done}/${candidates.length} resumes...`);
+  }
 }
 
 // AI ranking in batches
 async function aiRankInBatches(candidates, jd, totalCount) {
-  // BATCH=4 keeps each response well under Gemini's output limit (~4800 chars)
-  // which was the root cause of truncation with BATCH=8.
-  // PARALLEL=3 runs 3 batches concurrently, so total wall-clock time is similar
-  // to the old serial BATCH=8 approach but with far fewer truncation errors.
-  const BATCH    = 4;
+  // BATCH=6 — summaries are now ~half the old size so 6 fits comfortably within
+  // Gemini's output limit. PARALLEL=3 → 18 candidates scored per wave.
+  // For 17 videographer candidates this means 3 batches, 1 wave = ~1 Gemini round-trip.
+  const BATCH    = 6;
   const PARALLEL = 3;
   let done = 0;
   const donelock = { v: 0 }; // simple counter for progress (shared across parallel tasks)
@@ -1913,10 +1907,10 @@ async function aiRankInBatches(candidates, jd, totalCount) {
       `Other Commitments: ${c.commitments || 'None mentioned'}`,
       `Location: ${c.location || '?'}`,
     ];
-    if (c.why_alfaleus)        lines.push(`Why Alfaleus:\n${c.why_alfaleus.slice(0, 600)}`);
-    if (c.project_description) lines.push(`End-to-End Project:\n${c.project_description.slice(0, 500)}`);
-    if (c.achievements)        lines.push(`Achievements: ${c.achievements.slice(0, 400)}`);
-    if (c.notes)               lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
+    if (c.why_alfaleus)        lines.push(`Why Alfaleus: ${c.why_alfaleus.slice(0, 300)}`);
+    if (c.project_description) lines.push(`Project: ${c.project_description.slice(0, 250)}`);
+    if (c.achievements)        lines.push(`Achievements: ${c.achievements.slice(0, 200)}`);
+    if (c.notes)               lines.push(`Notes: ${c.notes.slice(0, 150)}`);
 
     // ── Role-specific Q&A ─────────────────────────────────────────────────
     // Collect the union of QA field sets for all roles this candidate applied for.
@@ -1930,7 +1924,7 @@ async function aiRankInBatches(candidates, jd, totalCount) {
         if (seenKeys.has(key)) continue;
         seenKeys.add(key);
         const val = (c[key] || '').trim();
-        if (val) roleQaLines.push(`  [${label}]: ${val.slice(0, 500)}`);
+        if (val) roleQaLines.push(`  [${label}]: ${val.slice(0, 250)}`);
       }
     }
     // Fallback: if the candidate has any rq_ fields filled but no matching role
@@ -1940,14 +1934,14 @@ async function aiRankInBatches(candidates, jd, totalCount) {
         if (!key.startsWith('rq_')) continue;
         if (seenKeys.has(key)) continue;
         const val = (c[key] || '').trim();
-        if (val) roleQaLines.push(`  [${key.replace('rq_','').replace(/_/g,' ')}]: ${val.slice(0, 400)}`);
+        if (val) roleQaLines.push(`  [${key.replace('rq_','').replace(/_/g,' ')}]: ${val.slice(0, 250)}`);
       }
     }
     if (roleQaLines.length > 0) {
       lines.push(`Role-Specific Application Q&A:\n${roleQaLines.join('\n')}`);
     }
 
-    if (c.resume_text)         lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
+    if (c.resume_text)         lines.push(`Resume Content:\n${c.resume_text.slice(0, 1200)}`);
     else                       lines.push(`(No resume text — evaluating on form data only)`);
     return lines.join('\n');
   }
