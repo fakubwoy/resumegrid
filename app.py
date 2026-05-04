@@ -1198,6 +1198,14 @@ def _find_resume_in_gdrive_folder(folder_id, timeout=12):
     return None
 
 
+# ── In-process resume text cache ────────────────────────────────────────────
+# Keyed by URL. Survives for the lifetime of the worker process (recycled every
+# 200 requests by gunicorn max_requests). This means a second "Rank" click on
+# the same session doesn't re-crawl all 17 Drive folders — saves 3-5 minutes.
+_RESUME_CACHE: dict = {}
+_RESUME_CACHE_LOCK = threading.Lock()
+
+
 def _fetch_resume_text(url, timeout=12):
     """
     Fetch a Google Drive resume link and extract its text.
@@ -1268,8 +1276,20 @@ def api_fetch_resume():
     if not url or not url.startswith("http"):
         return jsonify({"text": "", "ok": False, "error": "invalid url"}), 400
 
+    # Check cache first — avoids re-crawling Drive folders on every ranking run
+    with _RESUME_CACHE_LOCK:
+        if url in _RESUME_CACHE:
+            cached = _RESUME_CACHE[url]
+            logger.info("Resume cache HIT %s → %d chars", url[:80], len(cached))
+            return jsonify({"text": cached, "ok": bool(cached), "cached": True})
+
     text = _fetch_resume_text(url)
     logger.info("Resume fetch %s → %d chars", url[:80], len(text))
+
+    # Cache even empty results so we don't retry failed URLs repeatedly
+    with _RESUME_CACHE_LOCK:
+        _RESUME_CACHE[url] = text
+
     return jsonify({"text": text, "ok": bool(text)})
 
 
@@ -1333,50 +1353,36 @@ def api_rank_candidates():
         # frontend never falls back to score=50 for already-completed candidates.
         salvaged = []
         try:
-            # Pass 1: simple flat objects (most common case)
-            for m in re.finditer(
-                r'\{\s*"id"\s*:\s*(\d+).*?"score"\s*:\s*(\d+)[^}]*\}',
-                raw, re.DOTALL
-            ):
-                try:
-                    obj = json.loads(m.group())
-                    if "id" in obj and "score" in obj:
-                        skill_depth = obj.get("skill_depth")
-                        salvaged.append({
-                            "id":          int(obj["id"]),
-                            "score":       max(0, min(100, int(float(obj["score"])))),
-                            "reason":      str(obj.get("reason", ""))[:300],
-                            "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
-                        })
-                except Exception:
-                    pass
+            # Sanitize control characters in raw before salvage (same as the main parse path)
+            salvage_raw = ''.join(c if ord(c) >= 0x20 or c == '\t' else ' ' for c in raw)
 
-            # Pass 2: objects with nested skill_depth dict — handle brace nesting
-            if not salvaged:
-                depth = 0
-                start = None
-                for pos, ch in enumerate(raw):
-                    if ch == '{':
-                        if depth == 0:
-                            start = pos
-                        depth += 1
-                    elif ch == '}':
-                        depth -= 1
-                        if depth == 0 and start is not None:
-                            chunk = raw[start:pos+1]
-                            try:
-                                obj = json.loads(chunk)
-                                if "id" in obj and "score" in obj:
-                                    skill_depth = obj.get("skill_depth")
-                                    salvaged.append({
-                                        "id":          int(obj["id"]),
-                                        "score":       max(0, min(100, int(float(obj["score"])))),
-                                        "reason":      str(obj.get("reason", ""))[:300],
-                                        "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
-                                    })
-                            except Exception:
-                                pass
-                            start = None
+            # Brace-counting extractor: handles nested skill_depth dicts correctly.
+            # The old Pass-1 regex [^}]* stopped at the first } inside skill_depth,
+            # so only flat objects were matched — skipping most candidates.
+            depth = 0
+            start = None
+            for pos, ch in enumerate(salvage_raw):
+                if ch == '{':
+                    if depth == 0:
+                        start = pos
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        chunk = salvage_raw[start:pos+1]
+                        try:
+                            obj = json.loads(chunk)
+                            if "id" in obj and "score" in obj:
+                                skill_depth = obj.get("skill_depth")
+                                salvaged.append({
+                                    "id":          int(obj["id"]),
+                                    "score":       max(0, min(100, int(float(obj["score"])))),
+                                    "reason":      str(obj.get("reason", ""))[:300],
+                                    "skill_depth": skill_depth if isinstance(skill_depth, dict) else None,
+                                })
+                        except Exception:
+                            pass
+                        start = None
         except Exception as salvage_err:
             logger.warning("Salvage attempt failed: %s", salvage_err)
 

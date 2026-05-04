@@ -1701,19 +1701,8 @@ async function startRanking() {
     // Filter to candidates who applied for this specific role.
     // This ensures all applicants for the role are ranked (fixes "missing candidates" bug)
     // and the AI gets correctly calibrated scores (no noise from unrelated candidates).
-    // Match candidates whose applied role overlaps with the preset label.
-    // We check each word from the preset label (length > 3) against the candidate's
-    // role string, so "Videographer + Editor" correctly matches roles that contain
-    // "videographer" OR "editor" — not just the first word.
-    const presetWords = preset.label.toLowerCase().split(/[\s+\/\(\)\-]+/).filter(w => w.length > 3);
     const roleApplicants = allCandidates.filter(c =>
-      c.roles && c.roles.some(r => {
-        const rLower = r.toLowerCase();
-        // Exact full match first (most reliable)
-        if (rLower === preset.label.toLowerCase()) return true;
-        // Partial: any significant word from preset label found in role
-        return presetWords.some(w => rLower.includes(w));
-      })
+      c.roles && c.roles.some(r => r.toLowerCase().includes(preset.label.split(' ')[0].toLowerCase()))
     );
 
     if (roleApplicants.length > 0) {
@@ -1806,31 +1795,36 @@ async function rankCandidates(candidates, jd) {
 }
 
 // Fetch resumes via backend proxy (to handle CORS on Drive)
+// All candidates are fetched fully in parallel — the server caches results so
+// repeated ranking runs skip the Drive crawl entirely (cache HIT in logs).
 async function fetchResumesInBatches(candidates, totalCount) {
-  const BATCH = 8;
   let done = 0;
-  for (let i = 0; i < candidates.length; i += BATCH) {
-    const batch = candidates.slice(i, i+BATCH);
-    await Promise.all(batch.map(async c => {
-      try {
-        const res = await fetch(`${API_BASE}/api/fetch-resume`, {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ url: c.resume }),
-          signal: AbortSignal.timeout(20000)  // bumped from 15s — larger docs need more time
-        });
-        if (res.ok) {
-          const data = await res.json();
-          c.resume_text = data.text || null;
-        }
-      } catch(e) {
-        c.resume_text = null; // Will rank on form data only
-      }
-      done++;
-    }));
-    const pct = 10 + Math.round((done / candidates.length) * 35);
-    setProgress(pct, `Fetched ${done}/${candidates.length} resumes...`);
+  // Skip candidates whose resume_text is already populated (cached from a previous run)
+  const toFetch = candidates.filter(c => !c.resume_text);
+  const alreadyCached = candidates.length - toFetch.length;
+  if (alreadyCached > 0) {
+    setProgress(15, `${alreadyCached} resumes already cached, fetching ${toFetch.length} new...`);
   }
+
+  await Promise.all(toFetch.map(async c => {
+    try {
+      const res = await fetch(`${API_BASE}/api/fetch-resume`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ url: c.resume }),
+        signal: AbortSignal.timeout(30000)  // 30s per resume — Drive folder crawls can be slow
+      });
+      if (res.ok) {
+        const data = await res.json();
+        c.resume_text = data.text || null;
+      }
+    } catch(e) {
+      c.resume_text = null; // Will rank on form data only
+    }
+    done++;
+    const pct = 10 + Math.round((done / toFetch.length) * 35);
+    setProgress(pct, `Fetched ${done + alreadyCached}/${candidates.length} resumes...`);
+  }));
 }
 
 // AI ranking in batches

@@ -16,7 +16,7 @@ bind                 = f"0.0.0.0:{os.environ.get('PORT', '5000')}"
 worker_class         = "gevent"
 workers              = 1           # gevent handles concurrency; 1 worker is enough
 worker_connections   = 20          # reduced from 50 — sequential uploads don't need more
-timeout              = 300
+timeout              = 600         # raised from 300 — resume folder crawls for 17 candidates can take 5+ min
 keepalive            = 2           # reduced from 5 — fewer idle keep-alive sockets
 loglevel             = "info"
 
