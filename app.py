@@ -1520,8 +1520,51 @@ def api_download_ranked_excel():
         ("resume",        "Resume Link",         35),
         ("achievements",  "Achievements",        40),
         ("why_alfaleus",  "Why Alfaleus",        45),
+        # ── Role-specific Q&A columns ─────────────────────────────────────
+        # Tech / IoT / VR
+        ("rq_unity_portfolio",  "Unity/GitHub Portfolio",          40),
+        ("rq_hardware_sdk",     "Hardware SDK Experience",         40),
+        ("rq_realtime_comms",   "Real-time Comms (BLE/WS)",        40),
+        ("rq_vendor_docs",      "Vendor Doc Comfort",              30),
+        ("rq_iot_portfolio",    "IoT Portfolio",                   35),
+        ("rq_ble_protocol",     "BLE / Protocol",                  40),
+        ("rq_mobile_stack",     "Mobile Stack",                    25),
+        ("rq_datasheet_decode", "Datasheet Decode",                40),
+        # Design
+        ("rq_figma_portfolio",     "Figma Portfolio",              35),
+        ("rq_brand_social_design", "Brand Social Design",          40),
+        ("rq_design_system",       "Design System",                40),
+        ("rq_brand_critique",      "Brand Critique",               40),
+        ("rq_instagram_managed",   "Instagram Managed",            35),
+        # Content
+        ("rq_content_examples", "Content Portfolio",               40),
+        ("rq_brand_admire",     "Brand Admire Critique",           40),
+        ("rq_account_growth",   "Account Growth Story",            40),
+        ("rq_creator_account",  "Creator Account Link",            35),
+        # Videographer
+        ("rq_video_portfolio",  "Video Portfolio",                 35),
+        ("rq_equipment",        "Shoot Equipment",                 30),
+        ("rq_editing_tools",    "Editing Tools",                   30),
+        ("rq_turnaround",       "Reel Turnaround",                 25),
+        ("rq_client_shoot",     "Client Shoot Exp",                40),
+        # Ops
+        ("rq_ops_structure",    "Process Structure",               40),
+        ("rq_ops_tools",        "Ops Tools",                       30),
+        ("rq_catalog_exp",      "Catalog/Inventory Exp",           40),
+        ("rq_client_comms",     "Client Comms Example",            40),
+        # Growth
+        ("rq_paid_ads",         "Paid Ads Platforms",              30),
+        ("rq_campaign_proof",   "Campaign Proof Link",             35),
+        ("rq_budget_results",   "Budget + Results",                40),
+        ("rq_funnel_setup",     "Funnel / Landing Page",           40),
+        # Generic tail
         ("timestamp",     "Submitted",           18),
     ]
+
+    # Only include role-specific columns that actually have data in this export
+    rq_keys = {k for k, _, _ in COLS if k.startswith('rq_')}
+    rq_with_data = {k for c in scored for k in rq_keys if c.get(k)}
+    COLS = [(k, l, w) for k, l, w in COLS if not k.startswith('rq_') or k in rq_with_data]
 
     # ── Header row ────────────────────────────────────────────────────────────
     for col_idx, (_, label, width) in enumerate(COLS, 1):

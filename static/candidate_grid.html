@@ -838,6 +838,82 @@ const FIELD_MAP = {
   'achievements': 'achievements',
   // Anything else
   'anything else you would like us to know?': 'notes',
+
+  // ── Role-specific Q&A columns ─────────────────────────────────────────────
+  // Smart Glasses / IoT / VR (cols 18-25)
+  'paste a link to your unity portfolio or github. what\'s the most technically complex thing in it?': 'rq_unity_portfolio',
+  'have you worked with any hardware sdks or device integrations before? which ones, and what did you build?': 'rq_hardware_sdk',
+  'have you ever implemented real-time device-to-device communication (websockets, ble, wi-fi sync)? describe what you built.': 'rq_realtime_comms',
+  'rate your comfort level reading raw vendor documentation or undocumented hardware specs (1-5) and give one example of what you decoded.': 'rq_vendor_docs',
+  'paste your github or portfolio link. highlight any hardware/iot-related projects': 'rq_iot_portfolio',
+  'have you worked with ble or any hardware communication protocol? describe what you built and what protocol you used.': 'rq_ble_protocol',
+  'which mobile development stack do you use? (react native / android+kotlin / ios+swift / other)': 'rq_mobile_stack',
+  'describe a time you had to decode or implement something from a dense technical datasheet or vendor document. what was the challenge and how did you approach it?': 'rq_datasheet_decode',
+  // Partial/short keys for the above
+  'unity portfolio or github': 'rq_unity_portfolio',
+  'hardware sdks or device integrations': 'rq_hardware_sdk',
+  'real-time device-to-device communication': 'rq_realtime_comms',
+  'comfort level reading raw vendor documentation': 'rq_vendor_docs',
+  'ble or any hardware communication protocol': 'rq_ble_protocol',
+  'mobile development stack': 'rq_mobile_stack',
+  'dense technical datasheet or vendor document': 'rq_datasheet_decode',
+
+  // UI & Visual Designer (cols 26-30)
+  'paste your figma or design portfolio link. this is the most important part of your application.': 'rq_figma_portfolio',
+  'have you designed for a brand\'s social media (instagram templates, ad creatives)? if yes, include examples in your portfolio.': 'rq_brand_social_design',
+  'have you ever built or contributed to a design system or component library? briefly describe it.': 'rq_design_system',
+  'look at two brands — one that looks premium and one that looks cheap to you. name them and in 2-3 lines explain what makes the difference.': 'rq_brand_critique',
+  'do you currently manage or have you previously managed a brand\'s instagram page? if yes, paste the link.': 'rq_instagram_managed',
+  // Partial keys
+  'figma or design portfolio': 'rq_figma_portfolio',
+  'designed for a brand\'s social media': 'rq_brand_social_design',
+  'design system or component library': 'rq_design_system',
+  'one that looks premium and one that looks cheap': 'rq_brand_critique',
+  'managed a brand\'s instagram page': 'rq_instagram_managed',
+
+  // Content Lead (cols 31-34)
+  'paste 2-3 examples of content you have planned, scripted, or directed (instagram, youtube, or short-form). drive/folder link preferred.': 'rq_content_examples',
+  'pick any brand you admire on instagram. in 3-4 lines, explain specifically why their content works': 'rq_brand_admire',
+  'have you ever grown a social media account from scratch? if yes, what was the starting follower count, where did you take it, and how long did it take?': 'rq_account_growth',
+  'do you have a personal instagram/youtube/creator account? if yes, paste the link.': 'rq_creator_account',
+  // Partial keys
+  'examples of content you have planned, scripted, or directed': 'rq_content_examples',
+  'brand you admire on instagram': 'rq_brand_admire',
+  'grown a social media account from scratch': 'rq_account_growth',
+  'personal instagram/youtube/creator account': 'rq_creator_account',
+
+  // Videographer + Editor (cols 35-39)
+  'paste your portfolio link — this is the most important part of your application. even a google drive folder of your best work counts.': 'rq_video_portfolio',
+  'what equipment do you shoot with? (phone model / dslr / camera model)': 'rq_equipment',
+  'what editing tools do you use regularly? (premiere pro / capcut / davinci / final cut / other)': 'rq_editing_tools',
+  'how quickly can you typically turn around a 30-60 second reel from shoot to final edit?': 'rq_turnaround',
+  'have you shot content for a business, brand, or client before? if yes, briefly describe the project.': 'rq_client_shoot',
+  // Partial keys
+  'equipment do you shoot with': 'rq_equipment',
+  'editing tools do you use regularly': 'rq_editing_tools',
+  'turn around a 30-60 second reel': 'rq_turnaround',
+  'shot content for a business, brand, or client': 'rq_client_shoot',
+
+  // Ops / Catalog Manager (cols 40-43)
+  'describe a situation where you had to bring structure to a messy or disorganized process. what did you do?': 'rq_ops_structure',
+  'which tools are you comfortable with? (checkboxes: excel/sheets, google drive, notion, basic cms/website backend, whatsapp business)': 'rq_ops_tools',
+  'have you managed product catalogs, inventory, or e-commerce listings before? if yes, describe the scale (how many skus, what platform).': 'rq_catalog_exp',
+  'how comfortable are you communicating directly with business owners or clients on a daily basis? give an example.': 'rq_client_comms',
+  // Partial keys
+  'bring structure to a messy or disorganized process': 'rq_ops_structure',
+  'managed product catalogs, inventory, or e-commerce listings': 'rq_catalog_exp',
+  'communicating directly with business owners or clients on a daily basis': 'rq_client_comms',
+
+  // Growth Marketer (cols 44-47)
+  'have you run paid ads before? if yes, which platforms? (meta / google / both / other)': 'rq_paid_ads',
+  'paste a link to any campaign result, case study, or screenshot that shows performance you\'re proud of. even a small win counts.': 'rq_campaign_proof',
+  'what\'s the smallest budget you\'ve run a successful campaign on, and what were the results (ctr, cpl, roas, or whatever metric mattered)?': 'rq_budget_results',
+  'are you familiar with setting up whatsapp flows or basic landing pages as part of a funnel? describe what you\'ve done.': 'rq_funnel_setup',
+  // Partial keys
+  'run paid ads before': 'rq_paid_ads',
+  'campaign result, case study, or screenshot': 'rq_campaign_proof',
+  'smallest budget you\'ve run a successful campaign': 'rq_budget_results',
+  'whatsapp flows or basic landing pages as part of a funnel': 'rq_funnel_setup',
 };
 
 function normalizeKey(raw) {
@@ -1615,14 +1691,28 @@ async function startRanking() {
   let toRank = allCandidates;
 
   if (rankMode === 'preset') {
-    // ── Preset role mode: use built-in JD, rank ALL candidates ──────────────
+    // ── Preset role mode: use built-in JD, rank candidates who applied for this role ──
     if (!selectedPresetRole) {
       showToast('Select a role card first', 'error'); return;
     }
     const preset = PRESET_ROLES[selectedPresetRole];
     jd = preset.jd;
-    // Rank everyone — their submitted role tags are irrelevant for these new roles
-    showToast(`Ranking all ${toRank.length} candidates for "${preset.label}"…`, 'info');
+
+    // Filter to candidates who applied for this specific role.
+    // This ensures all applicants for the role are ranked (fixes "missing candidates" bug)
+    // and the AI gets correctly calibrated scores (no noise from unrelated candidates).
+    const roleApplicants = allCandidates.filter(c =>
+      c.roles && c.roles.some(r => r.toLowerCase().includes(preset.label.split(' ')[0].toLowerCase()))
+    );
+
+    if (roleApplicants.length > 0) {
+      toRank = roleApplicants;
+      showToast(`Ranking ${toRank.length} candidates who applied for "${preset.label}"…`, 'info');
+    } else {
+      // Fallback: if role matching finds nothing, rank all (old behavior)
+      toRank = allCandidates;
+      showToast(`Ranking all ${toRank.length} candidates for "${preset.label}"…`, 'info');
+    }
 
   } else {
     // ── Custom JD mode: existing behaviour ──────────────────────────────────
@@ -1685,10 +1775,10 @@ function setProgress(pct, text) {
 async function rankCandidates(candidates, jd) {
   const total = candidates.length;
 
-  // Step 1: Quick field-based pre-scoring (no API needed, instant)
+  // Step 1: Initialize all candidates as unscored
   setProgress(5, `Pre-scoring ${total} candidates by form data...`);
-  // Initialize scores to 0
-  candidates.forEach(c => { c.score = 0; c.score_reason = 'Pending...'; c.resume_text = null; });
+  // Use null so applyScores can reliably detect "not yet scored" vs "legitimately 0"
+  candidates.forEach(c => { c.score = null; c.score_reason = 'Pending...'; c.resume_text = null; });
 
   // Step 2: Fetch resumes in parallel batches
   setProgress(10, `Fetching ${total} resumes from Google Drive...`);
@@ -1743,6 +1833,68 @@ async function aiRankInBatches(candidates, jd, totalCount) {
   let done = 0;
   const donelock = { v: 0 }; // simple counter for progress (shared across parallel tasks)
 
+  // ── Role-specific Q&A field definitions ─────────────────────────────────
+  // Maps each role (as it appears in roles[]) to the fields that contain
+  // that role's application questions. These are injected into the AI prompt
+  // so the scorer sees the candidate's actual role-specific answers.
+
+  const ROLE_QA_FIELDS = {
+    'Smart Glasses & IoT Application Developer': [
+      { key: 'rq_unity_portfolio',   label: 'Unity/GitHub Portfolio'             },
+      { key: 'rq_hardware_sdk',      label: 'Hardware SDK / Device Experience'   },
+      { key: 'rq_realtime_comms',    label: 'Real-time Device Communication'     },
+      { key: 'rq_vendor_docs',       label: 'Vendor Doc Comfort (1-5)'           },
+      { key: 'rq_iot_portfolio',     label: 'IoT Portfolio Link'                 },
+      { key: 'rq_ble_protocol',      label: 'BLE / Hardware Protocol'            },
+      { key: 'rq_mobile_stack',      label: 'Mobile Dev Stack'                   },
+      { key: 'rq_datasheet_decode',  label: 'Datasheet / Vendor Doc Decode'      },
+    ],
+    'VR & Clinical App Developer (Healthcare Projects)': [
+      { key: 'rq_unity_portfolio',   label: 'Unity/GitHub Portfolio'             },
+      { key: 'rq_hardware_sdk',      label: 'Hardware SDK / Device Experience'   },
+      { key: 'rq_realtime_comms',    label: 'Real-time Communication'            },
+      { key: 'rq_vendor_docs',       label: 'Vendor Doc Comfort (1-5)'           },
+      { key: 'rq_iot_portfolio',     label: 'IoT/Hardware Portfolio'             },
+      { key: 'rq_ble_protocol',      label: 'BLE / Protocol Experience'          },
+      { key: 'rq_mobile_stack',      label: 'Mobile Dev Stack'                   },
+      { key: 'rq_datasheet_decode',  label: 'Technical Doc Decode'               },
+    ],
+    'UI & Visual Designer (Product + Brand)': [
+      { key: 'rq_figma_portfolio',       label: 'Figma / Design Portfolio'       },
+      { key: 'rq_brand_social_design',   label: 'Brand Social Media Design Exp'  },
+      { key: 'rq_design_system',         label: 'Design System / Component Lib'  },
+      { key: 'rq_brand_critique',        label: 'Premium vs Cheap Brand Critique'},
+      { key: 'rq_instagram_managed',     label: 'Instagram Page Managed'         },
+    ],
+    'Content Lead': [
+      { key: 'rq_content_examples',  label: 'Content Portfolio (Planned/Directed)'},
+      { key: 'rq_brand_admire',      label: 'Brand Instagram Critique'           },
+      { key: 'rq_account_growth',    label: 'Social Account Growth Story'        },
+      { key: 'rq_creator_account',   label: 'Personal Creator Account'           },
+      // Content lead also benefits from design context
+      { key: 'rq_instagram_managed', label: 'Instagram Page Managed'             },
+    ],
+    'Videographer + Editor': [
+      { key: 'rq_video_portfolio',   label: 'Video Portfolio Link'               },
+      { key: 'rq_equipment',         label: 'Shoot Equipment'                    },
+      { key: 'rq_editing_tools',     label: 'Editing Tools'                      },
+      { key: 'rq_turnaround',        label: 'Reel Turnaround Time'               },
+      { key: 'rq_client_shoot',      label: 'Client Shoot Experience'            },
+    ],
+    'Ops / Catalog Manager': [
+      { key: 'rq_ops_structure',     label: 'Process Structure Example'          },
+      { key: 'rq_ops_tools',         label: 'Tools Comfortable With'             },
+      { key: 'rq_catalog_exp',       label: 'Catalog / Inventory Experience'     },
+      { key: 'rq_client_comms',      label: 'Client Communication Example'       },
+    ],
+    'Growth Marketer': [
+      { key: 'rq_paid_ads',          label: 'Paid Ads Platforms'                 },
+      { key: 'rq_campaign_proof',    label: 'Campaign Result / Proof'            },
+      { key: 'rq_budget_results',    label: 'Smallest Budget + Results'          },
+      { key: 'rq_funnel_setup',      label: 'WhatsApp Flow / Landing Page Setup' },
+    ],
+  };
+
   // ── Helpers (defined once, outside the loop) ─────────────────────────────
 
   function buildSummary(c, idx) {
@@ -1760,6 +1912,36 @@ async function aiRankInBatches(candidates, jd, totalCount) {
     if (c.project_description) lines.push(`End-to-End Project:\n${c.project_description.slice(0, 500)}`);
     if (c.achievements)        lines.push(`Achievements: ${c.achievements.slice(0, 400)}`);
     if (c.notes)               lines.push(`Additional Info: ${c.notes.slice(0, 200)}`);
+
+    // ── Role-specific Q&A ─────────────────────────────────────────────────
+    // Collect the union of QA field sets for all roles this candidate applied for.
+    // This ensures every relevant answer is shown to the AI, even if the candidate
+    // applied for multiple roles that map to different question columns.
+    const seenKeys = new Set();
+    const roleQaLines = [];
+    for (const role of (c.roles || [])) {
+      const fields = ROLE_QA_FIELDS[role] || [];
+      for (const { key, label } of fields) {
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        const val = (c[key] || '').trim();
+        if (val) roleQaLines.push(`  [${label}]: ${val.slice(0, 500)}`);
+      }
+    }
+    // Fallback: if the candidate has any rq_ fields filled but no matching role
+    // (e.g. role detection mismatch), still include them so nothing is lost.
+    if (roleQaLines.length === 0) {
+      for (const key of Object.keys(c)) {
+        if (!key.startsWith('rq_')) continue;
+        if (seenKeys.has(key)) continue;
+        const val = (c[key] || '').trim();
+        if (val) roleQaLines.push(`  [${key.replace('rq_','').replace(/_/g,' ')}]: ${val.slice(0, 400)}`);
+      }
+    }
+    if (roleQaLines.length > 0) {
+      lines.push(`Role-Specific Application Q&A:\n${roleQaLines.join('\n')}`);
+    }
+
     if (c.resume_text)         lines.push(`Resume Content:\n${c.resume_text.slice(0, 2500)}`);
     else                       lines.push(`(No resume text — evaluating on form data only)`);
     return lines.join('\n');
@@ -1784,6 +1966,11 @@ For each JD skill, mark it:
   DEMONSTRATED  — used in a real project or job with concrete description
   MENTIONED     — listed as a skill but zero project/job context (half credit)
   NOT FOUND     — absent entirely
+
+IMPORTANT: The candidate profile may contain a "Role-Specific Application Q&A" section.
+These are the candidate's actual answers to role-specific screening questions from the application form.
+Treat these answers with the SAME weight as resume content — they are direct evidence of skills and experience.
+A specific, detailed answer to a role question counts as DEMONSTRATED. A vague or empty answer counts as NOT FOUND.
 
 ════════════════════════════════════════
 STEP 3 — COMPUTE THE SCORE (follow this formula exactly)
@@ -1877,10 +2064,8 @@ CANDIDATES:
         targetBatch[s.id].skill_depth  = s.skill_depth || null;
       }
     });
-    // Return indices of candidates still pending
-    return targetBatch.map((c, idx) => idx).filter(idx =>
-      targetBatch[idx].score === 0 && targetBatch[idx].score_reason === 'Pending...'
-    );
+    // Return indices of candidates still pending (score is null = not yet scored by AI)
+    return targetBatch.map((c, idx) => idx).filter(idx => targetBatch[idx].score === null);
   }
 
   // ── Process one batch: batch call → parallel individual retries if needed ──
